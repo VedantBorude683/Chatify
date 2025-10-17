@@ -2,25 +2,56 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UserCircleIcon } from '@heroicons/react/24/solid';
 import { motion, AnimatePresence } from 'framer-motion';
+import axios from 'axios';
 
 function Onboarding() {
   const [showForm, setShowForm] = useState(false);
   const [displayName, setDisplayName] = useState('');
   const [imagePreview, setImagePreview] = useState(null);
   const [status, setStatus] = useState('');
+  const [location, setLocation] = useState('');
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const navigate = useNavigate();
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
     if (file) {
       setImagePreview(URL.createObjectURL(file));
+      // In a real app, you would also store the file object itself
+      // e.g., setImageFile(file);
     }
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    console.log({ displayName, status, imageFile: '...' });
-    navigate('/dashboard');
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        navigate('/'); // Redirect home if no token
+        return;
+      }
+
+      const config = {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      };
+
+      const payload = {
+        displayName,
+        status,
+        location,
+        // We are skipping the actual file upload logic for now
+      };
+      
+      await axios.put('http://localhost:3001/api/user/onboarding', payload, config);
+
+      navigate('/dashboard');
+
+    } catch (err) {
+      console.error('Onboarding submission failed:', err);
+      // You could add an error message to the UI here
+    }
   };
 
   const stageVariants = {
@@ -78,37 +109,44 @@ function Onboarding() {
                   </label>
                 </div>
 
-                {/* Display Name Input */}
-                <div>
-                  <label htmlFor="displayName" className="block font-semibold text-gray-300">Display Name</label>
-                  <input
-                    type="text"
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    required
-                    className="mt-2 w-full rounded-md border border-gray-600 bg-gray-700/50 px-3 py-2 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                    placeholder="e.g., Jane Doe"
-                  />
+                {/* Display Name & Location Inputs */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="displayName" className="block font-semibold text-gray-300">Display Name</label>
+                    <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required
+                      className="mt-2 w-full rounded-md border border-gray-600 bg-gray-700/50 px-3 py-2 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                      placeholder="e.g., Jane Doe"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="location" className="block font-semibold text-gray-300">Location</label>
+                    <input type="text" value={location} onChange={(e) => setLocation(e.target.value)}
+                      className="mt-2 w-full rounded-md border border-gray-600 bg-gray-700/50 px-3 py-2 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
+                      placeholder="e.g., Solapur, India"
+                    />
+                  </div>
                 </div>
 
                 {/* Status/Bio Input */}
                 <div>
                   <label htmlFor="status" className="block font-semibold text-gray-300">Status</label>
-                  <textarea
-                    id="status"
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value)} // <-- THE FIX IS HERE
-                    rows={2}
+                  <textarea id="status" value={status} onChange={(e) => setStatus(e.target.value)} rows={2}
                     className="mt-2 w-full resize-none rounded-md border border-gray-600 bg-gray-700/50 px-3 py-2 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
                     placeholder="e.g., Available | Working on a project..."
                   />
                 </div>
 
-                {/* Submit Button */}
-                <button
-                  type="submit"
-                  className="w-full rounded-md bg-teal-600 py-2 font-bold text-white transition-colors hover:bg-teal-700"
-                >
+                {/* Notification Toggle */}
+                <div className="flex items-center justify-between rounded-lg bg-gray-700/50 p-4 border border-gray-600">
+                    <label htmlFor="notifications" className="font-semibold text-gray-300">Enable Desktop Notifications</label>
+                    <button type="button" onClick={() => setNotificationsEnabled(!notificationsEnabled)}
+                        className={`${notificationsEnabled ? 'bg-teal-600' : 'bg-gray-600'} relative inline-flex h-6 w-11 items-center rounded-full transition-colors`}
+                    >
+                        <span className={`${notificationsEnabled ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition-transform`} />
+                    </button>
+                </div>
+
+                <button type="submit" className="w-full rounded-md bg-teal-600 py-2 font-bold text-white transition-colors hover:bg-teal-700">
                   Finish Setup
                 </button>
               </form>

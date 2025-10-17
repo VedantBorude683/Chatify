@@ -3,12 +3,11 @@ const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 
-// REGISTER A NEW USER
+// REGISTER
 router.post('/register', async (req, res, next) => {
   try {
     const { username, email, password } = req.body;
 
-    // Check for missing fields
     if (!username || !email || !password) {
       return res.status(400).json("Please provide all required fields.");
     }
@@ -35,30 +34,25 @@ router.post('/register', async (req, res, next) => {
   }
 });
 
-
-// LOGIN A USER
+// LOGIN
 router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
 
-    // Check for missing fields
     if (!email || !password) {
       return res.status(400).json("Please provide email and password.");
     }
     
-    // Find user by email
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(401).json("Invalid credentials. Please try again.");
     }
 
-    // Compare passwords
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json("Invalid credentials. Please try again.");
     }
 
-    // Create a JSON Web Token (JWT)
     const payload = {
       user: {
         id: user.id,
@@ -68,10 +62,13 @@ router.post('/login', async (req, res, next) => {
     jwt.sign(
       payload,
       process.env.JWT_SECRET,
-      { expiresIn: '23d' }, // Token expires in 1 day
+      { expiresIn: '1d' },
       (err, token) => {
         if (err) throw err;
-        res.json({ token });
+        res.json({ 
+          token, 
+          hasCompletedOnboarding: user.hasCompletedOnboarding 
+        });
       }
     );
 
@@ -79,6 +76,5 @@ router.post('/login', async (req, res, next) => {
     next(err);
   }
 });
-
 
 module.exports = router;

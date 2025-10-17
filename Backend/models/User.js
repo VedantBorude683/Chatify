@@ -8,13 +8,24 @@ const UserSchema = new mongoose.Schema({
   email: {
     type: String,
     required: true,
-    unique: true, // Ensures no two users can register with the same email
+    unique: true,
   },
   password: {
     type: String,
     required: true,
   },
-}, { timestamps: true }); // Automatically adds 'createdAt' and 'updatedAt' fields
+  status: {
+    type: String,
+    default: "",
+  },
+  location: {
+    type: String,
+    default: "",
+  },
+  hasCompletedOnboarding: {
+    type: Boolean,
+    default: false,
+  },
+}, { timestamps: true });
 
-// This line compiles the schema into a model and exports it
 module.exports = mongoose.model('User', UserSchema);

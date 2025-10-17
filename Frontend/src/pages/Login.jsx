@@ -20,19 +20,12 @@ const GithubIcon = () => (
   </svg>
 );
 
-// Main Login/Signup Modal Component
 function Login({ closeModal, initialMode }) {
   const [isLoginView, setIsLoginView] = useState(initialMode === 'login');
   const [formData, setFormData] = useState({ username: '', email: '', password: '' });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const navigate = useNavigate();
-
-  useEffect(() => {
-    setIsLoginView(initialMode === 'login');
-    setError('');
-    setSuccess('');
-  }, [initialMode]);
 
   const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
 
@@ -47,9 +40,26 @@ function Login({ closeModal, initialMode }) {
           email: formData.email,
           password: formData.password,
         });
+        
+        // --- DEBUGGING LOGS START ---
+        console.log("Login successful. Server response:", res.data);
+        // --- DEBUGGING LOGS END ---
+        
         localStorage.setItem('token', res.data.token);
         closeModal();
-        navigate('/dashboard');
+
+        if (res.data.hasCompletedOnboarding) {
+          // --- DEBUGGING LOGS START ---
+          console.log("User has completed onboarding. Redirecting to /dashboard...");
+          // --- DEBUGGING LOGS END ---
+          navigate('/dashboard');
+        } else {
+          // --- DEBUGGING LOGS START ---
+          console.log("User has NOT completed onboarding. Redirecting to /onboarding...");
+          // --- DEBUGGING LOGS END ---
+          navigate('/onboarding');
+        }
+
       } catch (err) {
         if (err.response && typeof err.response.data === 'string') {
           setError(err.response.data);
@@ -59,6 +69,7 @@ function Login({ closeModal, initialMode }) {
         console.error("Login error:", err);
       }
     } else {
+      // Signup Logic
       try {
         const res = await axios.post('http://localhost:3001/api/auth/register', {
           username: formData.username,
@@ -69,7 +80,7 @@ function Login({ closeModal, initialMode }) {
         setTimeout(() => {
           setIsLoginView(true);
           setSuccess('');
-          setFormData(prev => ({...prev, username: ''}));
+          setFormData({ username: '', email: '', password: '' });
         }, 2000);
       } catch (err) {
         if (err.response && typeof err.response.data === 'string') {
