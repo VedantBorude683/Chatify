@@ -1,0 +1,30 @@
+/* Add this to frontend/src/index.css */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2d3748;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4a5568;
+}
+
+.noise-bg {
+  position: relative;
+}
+
+.noise-bg::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-image: url('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAMAAAAp4XiDAAAAUVBMVEWFhYWDg4N3d3dtbW17e3t1dXWBgYGHh4d5eXlzc3OLi4ubm5uVlZWPj4+NjY19fX2JiYl/f39ra2uRkZGZmZlpaWmXl5dvb29xcXGTk5NnZ2c8TV1mAAAAG3RSTlNAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEAvEOwtAAAAYklEQVRIx+3MyQEAIAwDMCVKO6z0T7C9/fJ9sOCEcBhlsuaTVmoHH8ed+E7gAnSCfABLJNoSgCIiCI1gLGjGBhAIII8B5pDPiT7+aH2RAiLcBGonceSAIiL0CDQIaJNoSgCLiPQA5sw2GcoNO9kAAAAASUVORK5CYII=');
+  opacity: 0.02;
+  pointer-events: none;
+}

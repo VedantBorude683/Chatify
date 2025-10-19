@@ -10,12 +10,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@headlessui/react": "^2.2.9",
     "@heroicons/react": "^2.2.0",
     "axios": "^1.12.2",
     "framer-motion": "^12.23.24",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.9.4"
+    "react-router-dom": "^7.9.4",
+    "react-textarea-autosize": "^8.5.9"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",
