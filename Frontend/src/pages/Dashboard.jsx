@@ -107,8 +107,8 @@ function Dashboard() {
     { id: '2', name: 'Gaming', icon: <LockClosedIcon className="h-6 w-6 text-white" /> },
   ];
   const contacts = [
-    { _id: '68f291abd6b99d5f3b838b26', name: 'User A', time: 'Online', unread: 0, avatar: 'https://randomuser.me/api/portraits/men/44.jpg', online: true },
-    { _id: '68f26daceb845cc79be15fa1', name: 'User B', time: '2:36 PM', unread: 0, avatar: 'https://randomuser.me/api/portraits/women/45.jpg', online: true },
+    { _id: '68f291abd6b99d5f3b838b26', name: 'bholu', time: 'Online', unread: 0, avatar: 'https://randomuser.me/api/portraits/men/44.jpg', online: true },
+    { _id: '68f26daceb845cc79be15fa1', name: 'bablu', time: '2:36 PM', unread: 0, avatar: 'https://randomuser.me/api/portraits/women/45.jpg', online: true },
   ];
 
   useEffect(() => {
@@ -127,24 +127,51 @@ function Dashboard() {
     fetchUserData();
   }, [navigate]);
 
+  // Effect to establish and manage the main socket connection
   useEffect(() => {
     if (user) {
-      const newSocket = io('http://localhost:3001');
-      socket.current = newSocket;
-
-      newSocket.on('connect', () => {
-        newSocket.emit('addUser', user._id);
+      socket.current = io('http://localhost:3001');
+      socket.current.on('connect', () => {
+        socket.current.emit('addUser', user._id);
       });
-
-      newSocket.on('receiveMessage', (data) => {
-        setMessages(prevMessages => [...prevMessages, data]);
-      });
-
+      
       return () => {
-        newSocket.disconnect();
+        socket.current.disconnect();
       };
     }
   }, [user]);
+
+  // Separate effect to handle receiving messages
+  // --- UPDATED useEffect for debugging ---
+  useEffect(() => {
+    if (socket.current) {
+      const messageListener = (data) => {
+        console.log("--- MESSAGE RECEIVED ON CLIENT ---");
+        console.log("Incoming message data:", data);
+        console.log("Current selected chat:", selectedChat);
+
+        // This is the condition we need to check
+        if (selectedChat && data.senderId === selectedChat._id) {
+          console.log("IDs MATCH. Adding message to state.");
+          setMessages((prevMessages) => [...prevMessages, data]);
+        } else {
+          console.log("IDs DO NOT MATCH. Message will not be displayed.");
+          if (!selectedChat) {
+            console.log("Reason: No chat is currently selected.");
+          } else {
+            console.log(`Reason: Incoming senderId (${data.senderId}) does not match selected chatId (${selectedChat._id})`);
+          }
+        }
+      };
+      
+      socket.current.on('receiveMessage', messageListener);
+
+      // Cleanup function to prevent duplicate listeners
+      return () => {
+        socket.current.off('receiveMessage', messageListener);
+      };
+    }
+  }, [socket.current, selectedChat]); // Dependencies are correct
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -161,6 +188,12 @@ function Dashboard() {
       text: newMessage,
       timestamp: new Date().toISOString(),
     };
+    console.log("SENDING MESSAGE DATA:", {
+      i_am_sender: user.username,
+      my_sender_id: user._id,
+      i_am_sending_to: selectedChat.name,
+      the_recipient_id: selectedChat._id
+    });
 
     socket.current.emit('sendMessage', messageData);
     setMessages(prevMessages => [...prevMessages, messageData]);
