@@ -81,34 +81,66 @@ const ContactInfoPanel = ({ chat, isOpen, closePanel }) => (
             <h3 className="font-semibold text-white">Contact Info</h3>
           </header>
           <div className="flex flex-col items-center p-6">
-            <img src={chat.avatar} alt={chat.name} className="h-24 w-24 rounded-full" />
-            <h4 className="mt-4 text-xl font-semibold text-white">{chat.name}</h4>
-            <p className="text-gray-400 text-sm">+1 234 567 8900</p>
+            <img src={`https://i.pravatar.cc/150?u=${chat.email}`} alt={chat.username} className="h-24 w-24 rounded-full" />
+            <h4 className="mt-4 text-xl font-semibold text-white">{chat.username}</h4>
+            <p className="text-gray-400 text-sm">{chat.status || "No status available"}</p>
           </div>
         </motion.div>
       )}
     </AnimatePresence>
 );
 
+const NewChatModal = ({ isOpen, closeModal, usersList, onStartChat }) => (
+  <Transition appear show={isOpen} as={Fragment}>
+    <Dialog as="div" className="relative z-50" onClose={closeModal}>
+      <Transition.Child as={Fragment} enter="ease-out duration-300" enterFrom="opacity-0" enterTo="opacity-100" leave="ease-in duration-200" leaveFrom="opacity-100" leaveTo="opacity-0">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" />
+      </Transition.Child>
+      <div className="fixed inset-0 overflow-y-auto">
+        <div className="flex min-h-full items-center justify-center p-4 text-center">
+          <Transition.Child as={Fragment} enter="ease-out duration-300" enterFrom="opacity-0 scale-95" enterTo="opacity-100 scale-100" leave="ease-in duration-200" leaveFrom="opacity-100 scale-100" leaveTo="opacity-0 scale-95">
+            <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-gray-800/80 border border-white/10 p-6 text-left align-middle shadow-xl transition-all">
+              <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-white">Start a New Chat</Dialog.Title>
+              <p className="mt-1 text-sm text-gray-400">Select a user to begin a conversation.</p>
+              <div className="mt-4 max-h-80 overflow-y-auto">
+                {usersList.map(user => (
+                  <div key={user._id} onClick={() => onStartChat(user)}
+                    className="flex items-center p-3 cursor-pointer rounded-lg hover:bg-white/10 transition-colors">
+                    <img src={`https://i.pravatar.cc/150?u=${user.email}`} alt={user.username} className="h-10 w-10 rounded-full" />
+                    <div className="ml-4">
+                      <p className="font-semibold text-white">{user.username}</p>
+                      <p className="text-sm text-gray-500">{user.status || "No status"}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button onClick={closeModal} className="absolute top-4 right-4 text-gray-400 hover:text-white"><XMarkIcon className="h-6 w-6" /></button>
+            </Dialog.Panel>
+          </Transition.Child>
+        </div>
+      </div>
+    </Dialog>
+  </Transition>
+);
+
 function Dashboard() {
   const [user, setUser] = useState(null);
   const [selectedChat, setSelectedChat] = useState(null);
+  const [conversations, setConversations] = useState([]);
+  const [usersList, setUsersList] = useState([]);
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
   const [activeTab, setActiveTab] = useState('All');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isInfoPanelOpen, setIsInfoPanelOpen] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState('');
+  const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
   const socket = useRef(null);
   const navigate = useNavigate();
 
   const servers = [
     { id: '1', name: 'Work', icon: <HashtagIcon className="h-6 w-6 text-white" /> },
     { id: '2', name: 'Gaming', icon: <LockClosedIcon className="h-6 w-6 text-white" /> },
-  ];
-  const contacts = [
-    { _id: '68f291abd6b99d5f3b838b26', name: 'bholu', time: 'Online', unread: 0, avatar: 'https://randomuser.me/api/portraits/men/44.jpg', online: true },
-    { _id: '68f26daceb845cc79be15fa1', name: 'bablu', time: '2:36 PM', unread: 0, avatar: 'https://randomuser.me/api/portraits/women/45.jpg', online: true },
   ];
 
   useEffect(() => {
@@ -126,52 +158,65 @@ function Dashboard() {
     };
     fetchUserData();
   }, [navigate]);
+  
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!user) return;
+      try {
+        const token = localStorage.getItem('token');
+        const config = { headers: { Authorization: `Bearer ${token}` } };
+        const convosRes = await axios.get('http://localhost:3001/api/conversations', config);
+        setConversations(convosRes.data);
+        const usersRes = await axios.get('http://localhost:3001/api/user/', config);
+        setUsersList(usersRes.data);
+      } catch (err) {
+        console.error("Failed to fetch data:", err);
+      }
+    };
+    fetchData();
+  }, [user]);
 
-  // Effect to establish and manage the main socket connection
   useEffect(() => {
     if (user) {
-      socket.current = io('http://localhost:3001');
-      socket.current.on('connect', () => {
-        socket.current.emit('addUser', user._id);
+      const newSocket = io('http://localhost:3001');
+      socket.current = newSocket;
+      newSocket.on('connect', () => {
+        newSocket.emit('addUser', user._id);
       });
-      
       return () => {
-        socket.current.disconnect();
+        newSocket.disconnect();
       };
     }
   }, [user]);
 
-  // Separate effect to handle receiving messages
-  // --- UPDATED useEffect for debugging ---
   useEffect(() => {
     if (socket.current) {
       const messageListener = (data) => {
-        console.log("--- MESSAGE RECEIVED ON CLIENT ---");
-        console.log("Incoming message data:", data);
-        console.log("Current selected chat:", selectedChat);
-
-        // This is the condition we need to check
         if (selectedChat && data.senderId === selectedChat._id) {
-          console.log("IDs MATCH. Adding message to state.");
           setMessages((prevMessages) => [...prevMessages, data]);
-        } else {
-          console.log("IDs DO NOT MATCH. Message will not be displayed.");
-          if (!selectedChat) {
-            console.log("Reason: No chat is currently selected.");
-          } else {
-            console.log(`Reason: Incoming senderId (${data.senderId}) does not match selected chatId (${selectedChat._id})`);
-          }
         }
       };
-      
       socket.current.on('receiveMessage', messageListener);
-
-      // Cleanup function to prevent duplicate listeners
       return () => {
         socket.current.off('receiveMessage', messageListener);
       };
     }
-  }, [socket.current, selectedChat]); // Dependencies are correct
+  }, [socket.current, selectedChat]);
+
+  useEffect(() => {
+    const fetchMessages = async () => {
+      if (!selectedChat) return;
+      try {
+        const token = localStorage.getItem('token');
+        const config = { headers: { Authorization: `Bearer ${token}` } };
+        const res = await axios.get(`http://localhost:3001/api/messages/${selectedChat._id}`, config);
+        setMessages(res.data);
+      } catch (err) {
+        console.error("Failed to fetch messages:", err);
+      }
+    };
+    fetchMessages();
+  }, [selectedChat]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -181,23 +226,21 @@ function Dashboard() {
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (newMessage.trim() === '' || !socket.current || !user || !selectedChat) return;
-
     const messageData = {
       senderId: user._id,
       recipientId: selectedChat._id,
       text: newMessage,
       timestamp: new Date().toISOString(),
     };
-    console.log("SENDING MESSAGE DATA:", {
-      i_am_sender: user.username,
-      my_sender_id: user._id,
-      i_am_sending_to: selectedChat.name,
-      the_recipient_id: selectedChat._id
-    });
-
     socket.current.emit('sendMessage', messageData);
     setMessages(prevMessages => [...prevMessages, messageData]);
     setNewMessage('');
+  };
+
+  const handleStartNewChat = (chatUser) => {
+    setSelectedChat(chatUser);
+    setMessages([]);
+    setIsNewChatModalOpen(false);
   };
 
   if (!user) {
@@ -207,6 +250,9 @@ function Dashboard() {
   return (
     <div className="flex h-screen w-full bg-black text-gray-300 overflow-hidden noise-bg">
       <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200%] h-[200%] bg-gradient-to-br from-teal-500/20 via-purple-500/10 to-transparent blur-3xl opacity-50 animate-pulse" style={{ animationDuration: '15s' }}></div>
+      
+      <SettingsModal isOpen={isSettingsOpen} closeModal={() => setIsSettingsOpen(false)} user={user} handleLogout={handleLogout} />
+      <NewChatModal isOpen={isNewChatModalOpen} closeModal={() => setIsNewChatModalOpen(false)} usersList={usersList} onStartChat={handleStartNewChat} />
       
       <motion.div initial={{ x: -100 }} animate={{ x: 0 }} transition={{ duration: 0.5 }}
         className="w-20 h-screen bg-black/20 backdrop-blur-xl border-r border-white/5 flex flex-col items-center py-4 space-y-4 flex-shrink-0"
@@ -218,44 +264,40 @@ function Dashboard() {
         className="w-full md:w-[350px] h-screen bg-black/20 backdrop-blur-xl border-r border-white/5 flex flex-col flex-shrink-0"
       >
         <header className="flex items-center justify-between p-4 border-b border-white/10 flex-shrink-0">
-          <h2 className="text-lg font-bold text-white">Workspace</h2>
-          <button className="text-gray-400 hover:text-white"><PlusCircleIcon className="h-6 w-6" /></button>
+          <h2 className="text-lg font-bold text-white">{user.username}</h2>
+          <button onClick={() => setIsNewChatModalOpen(true)} className="text-gray-400 hover:text-white"><PlusCircleIcon className="h-6 w-6" /></button>
         </header>
 
         <div className="p-4 border-b border-white/10">
-          <div className="flex space-x-4">
-            {['All', 'Friends', 'Groups'].map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)}
-                className={`px-3 py-1 text-sm font-semibold rounded-full relative ${activeTab === tab ? 'text-white' : 'text-gray-400 hover:text-white'}`}>
-                {tab}
-                {activeTab === tab && <motion.div className="absolute bottom-[-8px] left-0 right-0 h-0.5 bg-teal-500" layoutId="active-tab-indicator" />}
-              </button>
-            ))}
+          <div className="relative">
+            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+            <input type="text" placeholder="Search" className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-900 border border-gray-700 focus:outline-none focus:ring-1 focus:ring-teal-500" />
           </div>
         </div>
         
         <div className="flex-grow overflow-y-auto">
-          {contacts.map(contact => (
-            <div 
-              key={contact._id} 
-              onClick={() => {
-                setSelectedChat(contact);
-                setMessages([]);
-              }}
-              className={`relative flex items-center p-4 cursor-pointer border-l-2 transition-colors ${selectedChat?._id === contact._id ? 'border-teal-400' : 'border-transparent hover:bg-white/5'}`}
-            >
-              {selectedChat?._id === contact._id && <motion.div layoutId="active-chat-indicator" className="absolute left-0 top-0 bottom-0 w-full h-full bg-gradient-to-r from-teal-500/20 to-transparent" />}
-              <div className="relative z-10">
-                <img src={contact.avatar} alt={contact.name} className="h-12 w-12 rounded-full" />
-                {contact.online && <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-green-400 border-2 border-gray-800 animate-pulse"></span>}
+          {conversations.map(convo => {
+            const otherUser = convo.members.find(member => member._id !== user._id);
+            if (!otherUser) return null;
+            return (
+              <div 
+                key={convo._id} 
+                onClick={() => {
+                  setSelectedChat(otherUser);
+                }}
+                className={`relative flex items-center p-4 cursor-pointer border-l-2 transition-colors ${selectedChat?._id === otherUser._id ? 'border-teal-400' : 'border-transparent hover:bg-white/5'}`}
+              >
+                {selectedChat?._id === otherUser._id && <motion.div layoutId="active-chat-indicator" className="absolute left-0 top-0 bottom-0 w-full h-full bg-gradient-to-r from-teal-500/20 to-transparent" />}
+                <div className="relative z-10">
+                  <img src={`https://i.pravatar.cc/150?u=${otherUser.email}`} alt={otherUser.username} className="h-12 w-12 rounded-full" />
+                </div>
+                <div className="ml-4 flex-grow z-10 overflow-hidden">
+                  <p className="font-semibold text-white">{otherUser.username}</p>
+                  <p className="text-sm text-gray-400 truncate">{convo.lastMessage?.text || "No messages yet"}</p>
+                </div>
               </div>
-              <div className="ml-4 flex-grow z-10">
-                <p className="font-semibold text-white">{contact.name}</p>
-                <p className="text-sm text-gray-400">{contact.time}</p>
-              </div>
-               {contact.unread > 0 && <span className="h-6 w-6 flex items-center justify-center rounded-full bg-teal-500 text-white text-xs font-bold">{contact.unread}</span>}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </motion.aside>
 
@@ -265,9 +307,9 @@ function Dashboard() {
             <motion.div key={selectedChat._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-grow flex flex-col">
               <header onClick={() => setIsInfoPanelOpen(true)} className="flex items-center justify-between p-4 bg-black/20 backdrop-blur-xl border-b border-white/10 flex-shrink-0 cursor-pointer">
                 <div className="flex items-center gap-4">
-                  <img src={selectedChat.avatar} alt={selectedChat.name} className="h-10 w-10 rounded-full" />
+                  <img src={`https://i.pravatar.cc/150?u=${selectedChat.email}`} alt={selectedChat.username} className="h-10 w-10 rounded-full" />
                   <div>
-                    <p className="font-semibold text-white">{selectedChat.name}</p>
+                    <p className="font-semibold text-white">{selectedChat.username}</p>
                     <p className="text-xs text-green-400">Online</p>
                   </div>
                 </div>
@@ -278,7 +320,6 @@ function Dashboard() {
                 </div>
               </header>
               <div className="flex-grow p-6 overflow-y-auto bg-black/20">
-                <div className="text-center my-4"><span className="text-xs text-gray-500 bg-gray-800/50 px-2 py-1 rounded-full">Today</span></div>
                 {messages.map((msg, index) => (
                   <motion.div
                     key={index}
@@ -319,7 +360,7 @@ function Dashboard() {
               className="flex-grow flex flex-col items-center justify-center h-full text-center"
             >
               <h2 className="text-2xl font-semibold text-white">Select a chat to start messaging</h2>
-              <p className="text-gray-500 mt-2">You can also start a new chat from the sidebar.</p>
+              <p className="text-gray-500 mt-2">Your contacts will appear in the sidebar.</p>
             </motion.div>
           )}
         </AnimatePresence>
