@@ -135,6 +135,7 @@ function Dashboard() {
   const [isInfoPanelOpen, setIsInfoPanelOpen] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
+  const [onlineUsers, setOnlineUsers] = useState([]);
   const socket = useRef(null);
   const navigate = useNavigate();
 
@@ -182,6 +183,9 @@ function Dashboard() {
       socket.current = newSocket;
       newSocket.on('connect', () => {
         newSocket.emit('addUser', user._id);
+      });
+      newSocket.on('getOnlineUsers', (users) => {
+        setOnlineUsers(users);
       });
       return () => {
         newSocket.disconnect();
@@ -269,9 +273,14 @@ function Dashboard() {
         </header>
 
         <div className="p-4 border-b border-white/10">
-          <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <input type="text" placeholder="Search" className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-900 border border-gray-700 focus:outline-none focus:ring-1 focus:ring-teal-500" />
+          <div className="flex space-x-4">
+            {['All', 'Friends', 'Groups'].map(tab => (
+              <button key={tab} onClick={() => setActiveTab(tab)}
+                className={`px-3 py-1 text-sm font-semibold rounded-full relative ${activeTab === tab ? 'text-white' : 'text-gray-400 hover:text-white'}`}>
+                {tab}
+                {activeTab === tab && <motion.div className="absolute bottom-[-8px] left-0 right-0 h-0.5 bg-teal-500" layoutId="active-tab-indicator" />}
+              </button>
+            ))}
           </div>
         </div>
         
@@ -279,6 +288,8 @@ function Dashboard() {
           {conversations.map(convo => {
             const otherUser = convo.members.find(member => member._id !== user._id);
             if (!otherUser) return null;
+            const isOnline = onlineUsers.includes(otherUser._id);
+
             return (
               <div 
                 key={convo._id} 
@@ -290,6 +301,7 @@ function Dashboard() {
                 {selectedChat?._id === otherUser._id && <motion.div layoutId="active-chat-indicator" className="absolute left-0 top-0 bottom-0 w-full h-full bg-gradient-to-r from-teal-500/20 to-transparent" />}
                 <div className="relative z-10">
                   <img src={`https://i.pravatar.cc/150?u=${otherUser.email}`} alt={otherUser.username} className="h-12 w-12 rounded-full" />
+                   {isOnline && <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-green-400 border-2 border-gray-800 animate-pulse"></span>}
                 </div>
                 <div className="ml-4 flex-grow z-10 overflow-hidden">
                   <p className="font-semibold text-white">{otherUser.username}</p>
@@ -310,7 +322,11 @@ function Dashboard() {
                   <img src={`https://i.pravatar.cc/150?u=${selectedChat.email}`} alt={selectedChat.username} className="h-10 w-10 rounded-full" />
                   <div>
                     <p className="font-semibold text-white">{selectedChat.username}</p>
-                    <p className="text-xs text-green-400">Online</p>
+                    {onlineUsers.includes(selectedChat._id) ? (
+                      <p className="text-xs text-green-400">Online</p>
+                    ) : (
+                      <p className="text-xs text-gray-500">Offline</p>
+                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-4 text-gray-400">
@@ -360,7 +376,7 @@ function Dashboard() {
               className="flex-grow flex flex-col items-center justify-center h-full text-center"
             >
               <h2 className="text-2xl font-semibold text-white">Select a chat to start messaging</h2>
-              <p className="text-gray-500 mt-2">Your contacts will appear in the sidebar.</p>
+              <p className="text-gray-500 mt-2">Your conversations will appear in the sidebar.</p>
             </motion.div>
           )}
         </AnimatePresence>
