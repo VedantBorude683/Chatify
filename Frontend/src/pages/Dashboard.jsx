@@ -1,26 +1,43 @@
-import React, { useState, useEffect, Fragment } from 'react';
+import React, { useState, useEffect, useRef, Fragment } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import TextareaAutosize from 'react-textarea-autosize';
-import { Dialog, Transition } from '@headlessui/react';
-import {
-  MagnifyingGlassIcon, BellIcon, PlusCircleIcon, Cog6ToothIcon, PhoneIcon,
-  VideoCameraIcon, PaperAirplaneIcon, FaceSmileIcon, XMarkIcon, CheckCircleIcon
+import { io } from 'socket.io-client';
+import { Dialog, Transition, Menu } from '@headlessui/react';
+import { 
+  MagnifyingGlassIcon, BellIcon, PlusCircleIcon, Cog6ToothIcon, PhoneIcon, VideoCameraIcon, 
+  PaperAirplaneIcon, FaceSmileIcon, XMarkIcon, CheckCircleIcon, EllipsisVerticalIcon 
 } from '@heroicons/react/24/outline';
+import { HashtagIcon, LockClosedIcon } from '@heroicons/react/24/solid';
 
-// --- Reusable Animated Div for Scroll-in effects ---
-const MotionDiv = ({ children, index }) => (
-  <motion.div
-    initial={{ opacity: 0, y: 20 }}
-    animate={{ opacity: 1, y: 0 }}
-    transition={{ duration: 0.5, delay: index * 0.1 }}
-  >
-    {children}
-  </motion.div>
+// --- Helper Components ---
+const ServerIcon = ({ icon, name, active }) => (
+  <div className="relative group">
+    <motion.div
+      className={`absolute left-0 top-1/2 -translate-y-1/2 h-0 w-1 rounded-r-full bg-white transition-all duration-200 ${active ? 'h-10' : 'group-hover:h-5'}`}
+    />
+    <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
+      <div className={`h-12 w-12 rounded-2xl flex items-center justify-center cursor-pointer transition-all duration-200 ${active ? 'bg-teal-600 rounded-2xl' : 'bg-gray-700 rounded-3xl group-hover:bg-teal-600 group-hover:rounded-2xl'}`}>
+        {icon}
+      </div>
+    </motion.div>
+  </div>
 );
 
-// --- Settings Modal Component ---
+const TypingIndicator = () => (
+    <motion.div 
+        initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+        className="flex justify-start mb-4 items-end gap-2"
+    >
+        <div className="bg-gray-700 rounded-2xl py-3 px-4 flex items-center gap-1">
+            <motion.span animate={{ y: [0, -4, 0] }} transition={{ duration: 0.8, repeat: Infinity, delay: 0 }} className="h-2 w-2 bg-gray-500 rounded-full" />
+            <motion.span animate={{ y: [0, -4, 0] }} transition={{ duration: 0.8, repeat: Infinity, delay: 0.2 }} className="h-2 w-2 bg-gray-500 rounded-full" />
+            <motion.span animate={{ y: [0, -4, 0] }} transition={{ duration: 0.8, repeat: Infinity, delay: 0.4 }} className="h-2 w-2 bg-gray-500 rounded-full" />
+        </div>
+    </motion.div>
+);
+
 const SettingsModal = ({ isOpen, closeModal, user, handleLogout }) => (
   <Transition appear show={isOpen} as={Fragment}>
     <Dialog as="div" className="relative z-50" onClose={closeModal}>
@@ -30,20 +47,15 @@ const SettingsModal = ({ isOpen, closeModal, user, handleLogout }) => (
       <div className="fixed inset-0 overflow-y-auto">
         <div className="flex min-h-full items-center justify-center p-4 text-center">
           <Transition.Child as={Fragment} enter="ease-out duration-300" enterFrom="opacity-0 scale-95" enterTo="opacity-100 scale-100" leave="ease-in duration-200" leaveFrom="opacity-100 scale-100" leaveTo="opacity-0 scale-95">
-            <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-gradient-to-b from-gray-800 to-gray-900 border border-white/10 p-6 text-left align-middle shadow-xl transition-all">
-              <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-white">⚙️ Settings</Dialog.Title>
+            <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-gray-800/80 border border-white/10 p-6 text-left align-middle shadow-xl transition-all">
+              <Dialog.Title as="h3" className="text-lg font-medium leading-6 text-white">Settings</Dialog.Title>
               <div className="mt-4 flex flex-col items-center">
-                <motion.img
-                  src={`https://i.pravatar.cc/150?u=${user.email}`} 
-                  alt={user.username}
-                  className="h-24 w-24 rounded-full shadow-lg border-2 border-teal-500"
-                  initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.2 }}
-                />
+                <img src={`https://i.pravatar.cc/150?u=${user.email}`} alt={user.username} className="h-24 w-24 rounded-full" />
                 <h4 className="mt-4 text-xl font-semibold text-white">{user.username}</h4>
                 <p className="text-gray-400">{user.email}</p>
               </div>
-              <div className="mt-6 space-y-3">
-                <button onClick={handleLogout} className="w-full rounded-md bg-gradient-to-r from-red-500 to-red-700 py-2 font-semibold text-white hover:from-red-600 hover:to-red-800 transition-all duration-200">Logout</button>
+              <div className="mt-6">
+                <button onClick={handleLogout} className="w-full rounded-md bg-red-600/80 py-2 font-semibold text-white hover:bg-red-700">Logout</button>
               </div>
               <button onClick={closeModal} className="absolute top-4 right-4 text-gray-400 hover:text-white"><XMarkIcon className="h-6 w-6" /></button>
             </Dialog.Panel>
@@ -54,60 +66,49 @@ const SettingsModal = ({ isOpen, closeModal, user, handleLogout }) => (
   </Transition>
 );
 
-// --- Contact Info Panel Component ---
 const ContactInfoPanel = ({ chat, isOpen, closePanel }) => (
-  <AnimatePresence>
-    {isOpen && (
-      <motion.div
-        initial={{ x: '100%' }}
-        animate={{ x: 0 }}
-        exit={{ x: '100%' }}
-        transition={{ duration: 0.3, ease: 'easeInOut' }}
-        className="absolute top-0 right-0 h-full w-full md:w-[320px] bg-gray-800 border-l border-gray-700 z-30 flex flex-col"
-      >
-        <header className="flex items-center gap-4 p-4 border-b border-gray-700 bg-gray-900/80">
-          <button onClick={closePanel} className="text-gray-400 hover:text-white"><XMarkIcon className="h-6 w-6" /></button>
-          <h3 className="font-semibold text-white">Contact Info</h3>
-        </header>
-        <div className="flex flex-col items-center p-6">
-          <motion.img
-            src={chat.avatar}
-            alt={chat.name}
-            className="h-24 w-24 rounded-full border-2 border-teal-500 shadow-md"
-            initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.3 }}
-          />
-          <h4 className="mt-4 text-xl font-semibold text-white">{chat.name}</h4>
-          <p className="text-gray-400 text-sm">📞 +1 234 567 8900</p>
-        </div>
-      </motion.div>
-    )}
-  </AnimatePresence>
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div
+          initial={{ x: '100%' }}
+          animate={{ x: 0 }}
+          exit={{ x: '100%' }}
+          transition={{ duration: 0.3, ease: 'easeInOut' }}
+          className="absolute top-0 right-0 h-full w-full md:w-[300px] bg-gray-800 border-l border-gray-700 z-30 flex flex-col"
+        >
+          <header className="flex items-center gap-4 p-4 border-b border-gray-700">
+            <button onClick={closePanel} className="text-gray-400 hover:text-white"><XMarkIcon className="h-6 w-6" /></button>
+            <h3 className="font-semibold text-white">Contact Info</h3>
+          </header>
+          <div className="flex flex-col items-center p-6">
+            <img src={chat.avatar} alt={chat.name} className="h-24 w-24 rounded-full" />
+            <h4 className="mt-4 text-xl font-semibold text-white">{chat.name}</h4>
+            <p className="text-gray-400 text-sm">+1 234 567 8900</p>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
 );
 
-// --- Typing Indicator Animation ---
-const TypingIndicator = () => (
-  <div className="flex items-center gap-1 mt-1 text-gray-400">
-    <span className="text-xs">typing</span>
-    <motion.span animate={{ opacity: [0.2, 1, 0.2] }} transition={{ repeat: Infinity, duration: 1 }} className="text-xs">.</motion.span>
-    <motion.span animate={{ opacity: [0.2, 1, 0.2] }} transition={{ repeat: Infinity, duration: 1, delay: 0.2 }} className="text-xs">.</motion.span>
-    <motion.span animate={{ opacity: [0.2, 1, 0.2] }} transition={{ repeat: Infinity, duration: 1, delay: 0.4 }} className="text-xs">.</motion.span>
-  </div>
-);
-
-// --- Main Dashboard Component ---
 function Dashboard() {
   const [user, setUser] = useState(null);
   const [selectedChat, setSelectedChat] = useState(null);
+  const [activeTab, setActiveTab] = useState('All');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isInfoPanelOpen, setIsInfoPanelOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('All');
   const [isTyping, setIsTyping] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const socket = useRef(null);
   const navigate = useNavigate();
 
+  const servers = [
+    { id: '1', name: 'Work', icon: <HashtagIcon className="h-6 w-6 text-white" /> },
+    { id: '2', name: 'Gaming', icon: <LockClosedIcon className="h-6 w-6 text-white" /> },
+  ];
   const contacts = [
-    { id: 1, name: 'Ares Morgan', time: 'Just now', unread: 2, avatar: 'https://randomuser.me/api/portraits/women/44.jpg', online: true },
-    { id: 2, name: 'Alexandra Chang', time: '2:36 PM', unread: 0, avatar: 'https://randomuser.me/api/portraits/women/45.jpg', online: false },
-    { id: 3, name: 'Isabella Garcia', time: 'Yesterday', unread: 0, avatar: 'https://randomuser.me/api/portraits/women/46.jpg', online: false },
+    { _id: '68f291abd6b99d5f3b838b26', name: 'User A', time: 'Online', unread: 0, avatar: 'https://randomuser.me/api/portraits/men/44.jpg', online: true },
+    { _id: '68f26daceb845cc79be15fa1', name: 'User B', time: '2:36 PM', unread: 0, avatar: 'https://randomuser.me/api/portraits/women/45.jpg', online: true },
   ];
 
   useEffect(() => {
@@ -126,138 +127,166 @@ function Dashboard() {
     fetchUserData();
   }, [navigate]);
 
+  useEffect(() => {
+    if (user) {
+      const newSocket = io('http://localhost:3001');
+      socket.current = newSocket;
+
+      newSocket.on('connect', () => {
+        newSocket.emit('addUser', user._id);
+      });
+
+      newSocket.on('receiveMessage', (data) => {
+        setMessages(prevMessages => [...prevMessages, data]);
+      });
+
+      return () => {
+        newSocket.disconnect();
+      };
+    }
+  }, [user]);
+
   const handleLogout = () => {
     localStorage.removeItem('token');
     window.location.href = '/';
   };
+  
+  const handleSendMessage = (e) => {
+    e.preventDefault();
+    if (newMessage.trim() === '' || !socket.current || !user || !selectedChat) return;
 
-  // Simulate typing indicator for demo
-  useEffect(() => {
-    if (selectedChat) {
-      const timer = setTimeout(() => setIsTyping(true), 1000);
-      const stop = setTimeout(() => setIsTyping(false), 4000);
-      return () => { clearTimeout(timer); clearTimeout(stop); };
-    }
-  }, [selectedChat]);
+    const messageData = {
+      senderId: user._id,
+      recipientId: selectedChat._id,
+      text: newMessage,
+      timestamp: new Date().toISOString(),
+    };
+
+    socket.current.emit('sendMessage', messageData);
+    setMessages(prevMessages => [...prevMessages, messageData]);
+    setNewMessage('');
+  };
 
   if (!user) {
     return <div className="flex h-screen items-center justify-center bg-gray-900 text-white">Loading...</div>;
   }
 
   return (
-    <div className="flex h-screen w-full bg-gradient-to-br from-gray-900 via-gray-950 to-black text-gray-300 overflow-hidden">
-      <SettingsModal isOpen={isSettingsOpen} closeModal={() => setIsSettingsOpen(false)} user={user} handleLogout={handleLogout} />
+    <div className="flex h-screen w-full bg-black text-gray-300 overflow-hidden noise-bg">
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200%] h-[200%] bg-gradient-to-br from-teal-500/20 via-purple-500/10 to-transparent blur-3xl opacity-50 animate-pulse" style={{ animationDuration: '15s' }}></div>
       
-      {/* Sidebar */}
-      <aside className="w-full md:w-[350px] h-screen bg-gray-800/50 backdrop-blur-xl border-r border-white/10 flex flex-col flex-shrink-0">
+      <motion.div initial={{ x: -100 }} animate={{ x: 0 }} transition={{ duration: 0.5 }}
+        className="w-20 h-screen bg-black/20 backdrop-blur-xl border-r border-white/5 flex flex-col items-center py-4 space-y-4 flex-shrink-0"
+      >
+        {servers.map((server, index) => <ServerIcon key={server.id} icon={server.icon} name={server.name} active={index === 0} />)}
+      </motion.div>
+
+      <motion.aside initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2, duration: 0.5 }}
+        className="w-full md:w-[350px] h-screen bg-black/20 backdrop-blur-xl border-r border-white/5 flex flex-col flex-shrink-0"
+      >
         <header className="flex items-center justify-between p-4 border-b border-white/10 flex-shrink-0">
-          <div className="flex items-center gap-3">
-            <img src={`https://i.pravatar.cc/150?u=${user.email}`} alt={user.username} className="h-10 w-10 rounded-full border border-teal-500 shadow-sm" />
-            <h2 className="text-lg font-semibold text-white">{user.username}</h2>
-          </div>
-          <button onClick={() => setIsSettingsOpen(true)} className="text-gray-400 hover:text-teal-400 transition-all"><Cog6ToothIcon className="h-6 w-6" /></button>
+          <h2 className="text-lg font-bold text-white">Workspace</h2>
+          <button className="text-gray-400 hover:text-white"><PlusCircleIcon className="h-6 w-6" /></button>
         </header>
 
         <div className="p-4 border-b border-white/10">
-          <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <input type="text" placeholder="Search" className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-900 border border-gray-700 focus:outline-none focus:ring-1 focus:ring-teal-500" />
-          </div>
-        </div>
-
-        <div className="p-4 border-b border-gray-700">
           <div className="flex space-x-4">
             {['All', 'Friends', 'Groups'].map(tab => (
               <button key={tab} onClick={() => setActiveTab(tab)}
                 className={`px-3 py-1 text-sm font-semibold rounded-full relative ${activeTab === tab ? 'text-white' : 'text-gray-400 hover:text-white'}`}>
                 {tab}
-                {activeTab === tab && <motion.div className="absolute bottom-[-4px] left-0 right-0 h-0.5 bg-teal-500" layoutId="underline" />}
+                {activeTab === tab && <motion.div className="absolute bottom-[-8px] left-0 right-0 h-0.5 bg-teal-500" layoutId="active-tab-indicator" />}
               </button>
             ))}
           </div>
         </div>
-
+        
         <div className="flex-grow overflow-y-auto">
-          {contacts.map((contact, index) => (
-            <MotionDiv key={contact.id} index={index}>
-              <div onClick={() => setSelectedChat(contact)}
-                className={`flex items-center p-4 cursor-pointer border-l-4 transition-colors ${selectedChat?.id === contact.id ? 'border-teal-500 bg-black/20' : 'border-transparent hover:bg-white/5'}`}>
-                <div className="relative">
-                  <img src={contact.avatar} alt={contact.name} className="h-12 w-12 rounded-full" />
-                  {contact.online && <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-green-500 border-2 border-gray-800 animate-pulse"></span>}
-                </div>
-                <div className="ml-4 flex-grow">
-                  <p className="font-semibold text-white">{contact.name}</p>
-                  <p className="text-sm text-gray-400">{contact.time}</p>
-                </div>
-                {contact.unread > 0 && <span className="h-6 w-6 flex items-center justify-center rounded-full bg-teal-500 text-white text-xs font-bold">{contact.unread}</span>}
+          {contacts.map(contact => (
+            <div 
+              key={contact._id} 
+              onClick={() => {
+                setSelectedChat(contact);
+                setMessages([]);
+              }}
+              className={`relative flex items-center p-4 cursor-pointer border-l-2 transition-colors ${selectedChat?._id === contact._id ? 'border-teal-400' : 'border-transparent hover:bg-white/5'}`}
+            >
+              {selectedChat?._id === contact._id && <motion.div layoutId="active-chat-indicator" className="absolute left-0 top-0 bottom-0 w-full h-full bg-gradient-to-r from-teal-500/20 to-transparent" />}
+              <div className="relative z-10">
+                <img src={contact.avatar} alt={contact.name} className="h-12 w-12 rounded-full" />
+                {contact.online && <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-green-400 border-2 border-gray-800 animate-pulse"></span>}
               </div>
-            </MotionDiv>
+              <div className="ml-4 flex-grow z-10">
+                <p className="font-semibold text-white">{contact.name}</p>
+                <p className="text-sm text-gray-400">{contact.time}</p>
+              </div>
+               {contact.unread > 0 && <span className="h-6 w-6 flex items-center justify-center rounded-full bg-teal-500 text-white text-xs font-bold">{contact.unread}</span>}
+            </div>
           ))}
         </div>
-      </aside>
+      </motion.aside>
 
-      {/* Main Chat Area */}
       <main className="flex-grow flex flex-col relative">
         <AnimatePresence mode="wait">
           {selectedChat ? (
-            <motion.div key={selectedChat.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.3 }} className="flex-grow flex flex-col">
-              <header onClick={() => setIsInfoPanelOpen(true)} className="flex items-center justify-between p-4 bg-gray-800/50 backdrop-blur-xl border-b border-white/10 flex-shrink-0 cursor-pointer">
+            <motion.div key={selectedChat._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-grow flex flex-col">
+              <header onClick={() => setIsInfoPanelOpen(true)} className="flex items-center justify-between p-4 bg-black/20 backdrop-blur-xl border-b border-white/10 flex-shrink-0 cursor-pointer">
                 <div className="flex items-center gap-4">
                   <img src={selectedChat.avatar} alt={selectedChat.name} className="h-10 w-10 rounded-full" />
                   <div>
                     <p className="font-semibold text-white">{selectedChat.name}</p>
-                    <p className="text-xs text-gray-400 flex items-center gap-1">
-                      {isTyping ? <TypingIndicator /> : 'Online'}
-                    </p>
+                    <p className="text-xs text-green-400">Online</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-4 text-gray-400">
-                    <button className="hover:text-teal-400 transition-all"><PhoneIcon className="h-6 w-6" /></button>
-                    <button className="hover:text-teal-400 transition-all"><VideoCameraIcon className="h-6 w-6" /></button>
+                  <button className="hover:text-white"><PhoneIcon className="h-6 w-6" /></button>
+                  <button className="hover:text-white"><VideoCameraIcon className="h-6 w-6" /></button>
+                  <button className="hover:text-white"><EllipsisVerticalIcon className="h-6 w-6" /></button>
                 </div>
               </header>
-
-              {/* Chat Messages */}
               <div className="flex-grow p-6 overflow-y-auto bg-black/20">
-                <div className="text-center my-4">
-                  <span className="text-xs text-gray-500 bg-gray-800 px-2 py-1 rounded-full">Today</span>
-                </div>
-                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="flex justify-end mb-4">
-                  <div className="bg-gradient-to-r from-teal-600 to-teal-700 text-white rounded-2xl py-2 px-4 max-w-lg flex items-center gap-2 shadow-lg">
-                    <span>Great! I have a few ideas.</span>
-                    <CheckCircleIcon className="h-4 w-4 text-teal-200" />
-                  </div>
-                </motion.div>
+                <div className="text-center my-4"><span className="text-xs text-gray-500 bg-gray-800/50 px-2 py-1 rounded-full">Today</span></div>
+                {messages.map((msg, index) => (
+                  <motion.div
+                    key={index}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className={`flex ${msg.senderId === user._id ? 'justify-end' : 'justify-start'} mb-4`}
+                  >
+                    <div className={`rounded-2xl py-2 px-4 max-w-lg flex items-center gap-2 ${msg.senderId === user._id ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
+                      <span>{msg.text}</span>
+                      {msg.senderId === user._id && <CheckCircleIcon className="h-4 w-4 text-teal-200" />}
+                    </div>
+                  </motion.div>
+                ))}
+                {isTyping && <TypingIndicator />}
               </div>
-
-              {/* Chat Input */}
-              <footer className="p-4 bg-gray-800/50 backdrop-blur-xl border-t border-white/10 flex-shrink-0">
-                <div className="flex items-center bg-gray-900 rounded-lg px-2 shadow-md">
-                  <motion.button whileTap={{ scale: 0.9 }} className="text-gray-400 hover:text-teal-400 p-2"><PlusCircleIcon className="h-6 w-6" /></motion.button>
-                  <TextareaAutosize placeholder="Type a message..." maxRows={5}
-                    className="flex-grow px-3 py-3 bg-transparent focus:outline-none text-white resize-none" />
-                  <motion.button whileTap={{ scale: 0.9 }} className="text-gray-400 hover:text-yellow-400 p-2"><FaceSmileIcon className="h-6 w-6" /></motion.button>
-                  <motion.button whileTap={{ scale: 0.9 }} className="bg-gradient-to-r from-teal-600 to-teal-700 text-white p-2 rounded-full hover:from-teal-500 hover:to-teal-600 m-1 shadow-lg"><PaperAirplaneIcon className="h-6 w-6" /></motion.button>
-                </div>
+              <footer className="p-4 bg-black/20 backdrop-blur-xl border-t border-white/10 flex-shrink-0">
+                <form onSubmit={handleSendMessage} className="flex items-center bg-gray-900/50 rounded-lg px-2">
+                  <motion.button type="button" whileTap={{ scale: 0.9 }} className="text-gray-400 hover:text-white p-2"><PlusCircleIcon className="h-6 w-6" /></motion.button>
+                  <TextareaAutosize
+                    placeholder="Type a message..."
+                    value={newMessage}
+                    onChange={(e) => setNewMessage(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }}
+                    maxRows={5}
+                    className="flex-grow px-3 py-3 bg-transparent focus:outline-none text-white resize-none"
+                  />
+                  <motion.button type="button" whileTap={{ scale: 0.9 }} className="text-gray-400 hover:text-yellow-400 p-2"><FaceSmileIcon className="h-6 w-6" /></motion.button>
+                  <motion.button type="submit" whileTap={{ scale: 0.9 }} className="bg-teal-600 text-white p-2 rounded-full hover:bg-teal-700 m-1 shadow-lg">
+                    <PaperAirplaneIcon className="h-6 w-6" />
+                  </motion.button>
+                </form>
               </footer>
             </motion.div>
           ) : (
-            <motion.div 
-              key="welcome"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              transition={{ duration: 0.5, ease: 'easeInOut' }}
-              className="flex-grow flex flex-col items-center justify-center h-full bg-gray-900 text-center"
+             <motion.div 
+              key="welcome" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.5, ease: 'easeInOut' }}
+              className="flex-grow flex flex-col items-center justify-center h-full text-center"
             >
-              <motion.img 
-                src={`https://i.pravatar.cc/150?u=${user.email}`} alt={user.username} 
-                className="h-24 w-24 rounded-full mb-4 shadow-lg border-2 border-teal-500"
-                initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 0.2, type: 'spring', stiffness: 120 }}
-              />
-              <h2 className="text-2xl font-semibold text-white">Welcome, {user.username} 👋</h2>
-              <p className="text-gray-500 mt-2">Select a chat to start messaging.</p>
+              <h2 className="text-2xl font-semibold text-white">Select a chat to start messaging</h2>
+              <p className="text-gray-500 mt-2">You can also start a new chat from the sidebar.</p>
             </motion.div>
           )}
         </AnimatePresence>
@@ -266,4 +295,5 @@ function Dashboard() {
     </div>
   );
 }
+
 export default Dashboard;
