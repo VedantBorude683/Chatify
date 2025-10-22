@@ -7,11 +7,12 @@ import { io } from 'socket.io-client';
 import { Dialog, Transition, Menu } from '@headlessui/react';
 import { 
   MagnifyingGlassIcon, BellIcon, PlusCircleIcon, Cog6ToothIcon, PhoneIcon, VideoCameraIcon, 
-  PaperAirplaneIcon, FaceSmileIcon, XMarkIcon, CheckCircleIcon, EllipsisVerticalIcon, ArrowLeftIcon, TrashIcon
+  PaperAirplaneIcon, FaceSmileIcon, XMarkIcon, CheckCircleIcon, EllipsisVerticalIcon, ArrowLeftIcon, TrashIcon,
+  PaperClipIcon, DocumentIcon // <-- ADDED THESE
 } from '@heroicons/react/24/outline';
 import { HashtagIcon, LockClosedIcon } from '@heroicons/react/24/solid';
 
-// --- Helper Components ---
+// --- Helper Components (Unchanged) ---
 const ServerIcon = ({ icon, name, active }) => (
   <div className="relative group">
     <motion.div
@@ -125,26 +126,20 @@ const NewChatModal = ({ isOpen, closeModal, usersList, onStartChat }) => (
   </Transition>
 );
 
-// --- Context Menu Component ---
+// --- Context Menu Component (Unchanged) ---
 const MessageContextMenu = ({ x, y, message, user, onDelete, closeMenu }) => {
-  // Check if message has a database ID before allowing deletion
   if (!message._id || message._id.startsWith('temp_')) {
-    // This message is temporary (optimistic update) and can't be deleted from the server yet.
     return null;
   }
-
   const isSender = message.senderId === user._id;
   const readByOthers = message.readBy?.some(readerId => readerId !== user._id) ?? false;
   const alreadyDeletedEveryone = message.deletedEveryone;
   const showDeleteForEveryone = isSender && !readByOthers && !alreadyDeletedEveryone;
-
-  // Calculate position
   const menuWidth = 190;
-  const menuHeight = showDeleteForEveryone ? 90 : 50; // Adjust height based on options
+  const menuHeight = showDeleteForEveryone ? 90 : 50;
   let left = x;
   let top = y;
   let direction = "down";
-
   if (x + menuWidth > window.innerWidth) {
     left = window.innerWidth - menuWidth - 10;
   }
@@ -152,8 +147,6 @@ const MessageContextMenu = ({ x, y, message, user, onDelete, closeMenu }) => {
     top = y - menuHeight - 10;
     direction = "up";
   }
-
-  // Effect to close menu on outside click
   useEffect(() => {
     const handleClickOutside = () => closeMenu();
     document.addEventListener('mousedown', handleClickOutside);
@@ -161,29 +154,14 @@ const MessageContextMenu = ({ x, y, message, user, onDelete, closeMenu }) => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [closeMenu]);
-
   return (
     <motion.div
       key="context-menu"
       className="absolute backdrop-blur-md bg-gray-800/90 text-white rounded-xl shadow-2xl border border-gray-700/50 overflow-hidden z-50"
       style={{ top, left, transformOrigin: direction === "up" ? "bottom center" : "top center" }}
-      initial={{
-        opacity: 0,
-        scale: 0.8,
-        y: direction === "up" ? 15 : -15,
-      }}
-      animate={{
-        opacity: 1,
-        scale: 1,
-        y: 0,
-        transition: { type: "spring", stiffness: 200, damping: 18 },
-      }}
-      exit={{
-        opacity: 0,
-        scale: 0.9,
-        y: direction === "up" ? 15 : -15,
-        transition: { duration: 0.15 },
-      }}
+      initial={{ opacity: 0, scale: 0.8, y: direction === "up" ? 15 : -15 }}
+      animate={{ opacity: 1, scale: 1, y: 0, transition: { type: "spring", stiffness: 200, damping: 18 } }}
+      exit={{ opacity: 0, scale: 0.9, y: direction === "up" ? 15 : -15, transition: { duration: 0.15 } }}
     >
       <motion.button
         whileHover={{ backgroundColor: "rgba(255,255,255,0.05)", x: 3 }}
@@ -193,7 +171,6 @@ const MessageContextMenu = ({ x, y, message, user, onDelete, closeMenu }) => {
       >
         <TrashIcon className="h-4 w-4 inline mr-2" /> Delete for me
       </motion.button>
-
       {showDeleteForEveryone && (
         <motion.button
           whileHover={{ backgroundColor: "rgba(239,68,68,0.15)", x: 3 }}
@@ -227,13 +204,14 @@ function Dashboard() {
   const typingTimeout = useRef(null);
   const navigate = useNavigate();
   const chatContainerRef = useRef(null);
+  const fileInputRef = useRef(null); // <-- ADDED THIS
 
   const servers = [
     { id: '1', name: 'Work', icon: <HashtagIcon className="h-6 w-6 text-white" /> },
     { id: '2', name: 'Gaming', icon: <LockClosedIcon className="h-6 w-6 text-white" /> },
   ];
 
-  // --- User and Data Fetching ---
+  // --- User and Data Fetching (Unchanged) ---
   useEffect(() => {
     const fetchUserData = async () => {
       try {
@@ -267,7 +245,7 @@ function Dashboard() {
     fetchData();
   }, [user]);
 
-  // --- Socket Connection ---
+  // --- Socket Connection (Unchanged) ---
   useEffect(() => {
     if (user) {
       const newSocket = io('http://localhost:3001');
@@ -284,36 +262,20 @@ function Dashboard() {
     }
   }, [user]);
 
-  // --- Socket Event Listeners ---
+  // --- Socket Event Listeners (Unchanged, but robust) ---
   useEffect(() => {
     if (socket.current) {
-      
-      // --- (!!!) NEW ROBUST MESSAGE LISTENER (!!!) ---
       const messageListener = (data) => {
-        // --- DEBUGGING: Open your browser console (F12) to see this ---
-        console.log("Socket 'receiveMessage' data:", data);
-        // We expect to see the message from the server.
-        // If it's your own message, it *should* have a 'clientId' property
-        // that matches the 'temp_...' ID.
-
-        if (!user) return; // Ensure user state is available
-
+        if (!user) return; 
         setMessages((prevMessages) => {
             let tempMsgIndex = -1;
-
-            // --- Path 1: Check for 'clientId' (The robust way) ---
-            // We expect the server to echo back the 'clientId' we sent.
             if (data.clientId) {
                 tempMsgIndex = prevMessages.findIndex(msg => msg._id === data.clientId);
             }
-            
-            // --- Path 2: Check for matching timestamp (Original "fast path") ---
             if (tempMsgIndex === -1 && data.timestamp) {
                 const tempId = `temp_${data.timestamp}`;
                 tempMsgIndex = prevMessages.findIndex(msg => msg._id === tempId);
             }
-            
-            // --- Path 3: Check for matching text (Unreliable fallback) ---
             if (tempMsgIndex === -1 && data.senderId === user._id) {
                 tempMsgIndex = prevMessages.findLastIndex(msg =>
                     msg._id.startsWith('temp_') &&
@@ -321,35 +283,21 @@ function Dashboard() {
                     msg.text === data.text
                 );
             }
-
-            // --- If we found the temp message, replace it ---
             if (tempMsgIndex !== -1) {
-                console.log("SUCCESS: Found and replacing temp message:", prevMessages[tempMsgIndex]._id);
                 const updatedMessages = [...prevMessages];
-                updatedMessages[tempMsgIndex] = data; // Replace temp with real message
+                updatedMessages[tempMsgIndex] = data;
                 return updatedMessages;
             }
-
-            // --- If no temp message, it's a new message (from me or other) ---
             if (selectedChat) {
                 const isFromOtherUser = data.senderId === selectedChat._id;
                 const isFromMe = data.senderId === user._id;
-
-                // Add if it's from the other user OR from me (and unmatched)
-                // AND it's not already in the list
                 if ((isFromOtherUser || isFromMe) && !prevMessages.some(m => m._id === data._id)) {
-                    console.log("Adding new message:", data._id);
                     setIsTyping(false);
                     return [...prevMessages, data];
                 }
             }
-            
-            // No change
-            console.log("No action taken for message.");
             return prevMessages;
         });
-
-        // --- Update conversation list ---
         setConversations(prev => prev.map(convo => {
              if (convo._id === data.conversationId) {
                  return { ...convo, lastMessage: data };
@@ -364,7 +312,6 @@ function Dashboard() {
       const stopTypingListener = (data) => {
         if (selectedChat && data.senderId === selectedChat._id) setIsTyping(false);
       };
-
       const newUnreadListener = (data) => {
           if (!selectedChat || data.senderId !== selectedChat._id) {
               setConversations(prev => prev.map(convo =>
@@ -374,7 +321,6 @@ function Dashboard() {
               ));
           }
       };
-      
       const deleteListener = (data) => {
          setMessages(prev => prev.map(msg =>
             msg._id === data.messageId ? { ...msg, deletedEveryone: true, text: "This message was deleted" } : msg
@@ -386,13 +332,11 @@ function Dashboard() {
              return convo;
          }));
       };
-
       socket.current.on('receiveMessage', messageListener);
       socket.current.on('userTyping', typingListener);
       socket.current.on('userStoppedTyping', stopTypingListener);
       socket.current.on('newUnreadMessage', newUnreadListener);
       socket.current.on('messageDeleted', deleteListener);
-
       return () => {
         socket.current.off('receiveMessage', messageListener);
         socket.current.off('userTyping', typingListener);
@@ -401,9 +345,9 @@ function Dashboard() {
         socket.current.off('messageDeleted', deleteListener);
       };
     }
-  }, [socket.current, selectedChat, user]); // Added user dependency
+  }, [socket.current, selectedChat, user]);
 
-  // --- Message Fetching and Scrolling ---
+  // --- Message Fetching and Scrolling (Unchanged) ---
   useEffect(() => {
     const fetchMessages = async () => {
       if (!selectedChat) return;
@@ -431,19 +375,16 @@ function Dashboard() {
     window.location.href = '/';
   };
 
-  // --- (!!!) MODIFIED SEND MESSAGE HANDLER (!!!) ---
+  // --- (!!!) UPDATED 'handleSendMessage' (!!!) ---
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (newMessage.trim() === '' || !socket.current || !user || !selectedChat) return;
     
-    // Create client-side timestamp and a unique temp ID
     const timestamp = new Date().toISOString();
-    // Make tempId more unique just in case user sends 2 messages in the same millisecond
     const tempId = `temp_${timestamp}_${Math.random()}`; 
 
-    // Optimistic message to add to state immediately
     const optimisticMessage = {
-      _id: tempId, // This is the key we will search for
+      _id: tempId,
       senderId: user._id,
       recipientId: selectedChat._id,
       text: newMessage,
@@ -451,27 +392,98 @@ function Dashboard() {
       createdAt: timestamp,
       readBy: [user._id],
       deletedEveryone: false,
-      deletedFor: []
+      deletedFor: [],
+      messageType: 'text', // <-- SPECIFY 'text'
+      fileUrl: null        // <-- SPECIFY 'null'
     };
 
-    // Data to send to server
     const serverMessageData = {
       senderId: user._id,
       recipientId: selectedChat._id,
       text: newMessage,
       timestamp: timestamp, 
-      clientId: tempId // <-- !! THE CRITICAL ADDITION !!
-                      // We are sending the tempId to the server.
-                      // Most servers will automatically include this extra property
-                      // when broadcasting the message back.
+      clientId: tempId,
+      messageType: 'text', // <-- SPECIFY 'text'
+      fileUrl: null        // <-- SPECIFY 'null'
     };
 
-    console.log("Sending message with clientId:", tempId); // Debugging
     socket.current.emit('sendMessage', serverMessageData);
     setMessages(prevMessages => [...prevMessages, optimisticMessage]);
     setNewMessage('');
     if (typingTimeout.current) clearTimeout(typingTimeout.current);
     socket.current.emit('stopTyping', { senderId: user._id, recipientId: selectedChat._id });
+  };
+
+  // --- (!!!) NEW FILE UPLOAD HANDLER (!!!) ---
+  const handleFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file || !user || !selectedChat) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const token = localStorage.getItem('token');
+      const config = {
+        headers: { 
+          'Content-Type': 'multipart/form-data',
+          Authorization: `Bearer ${token}` 
+        }
+      };
+
+      // 1. Upload the file
+      const res = await axios.post('http://localhost:3001/api/upload', formData, config);
+      const { fileUrl } = res.data;
+
+      // 2. Determine messageType
+      let messageType = 'file';
+      if (file.type.startsWith('image/')) {
+        messageType = 'image';
+      }
+      
+      // 3. Prepare socket message data
+      const timestamp = new Date().toISOString();
+      const text = file.name; // Use filename as the text content
+      const tempId = `temp_${timestamp}_${Math.random()}`; 
+
+      const serverMessageData = {
+        senderId: user._id,
+        recipientId: selectedChat._id,
+        text: text,
+        timestamp: timestamp, 
+        clientId: tempId,
+        messageType: messageType, // 'image' or 'file'
+        fileUrl: fileUrl          // The URL from our server
+      };
+      
+      // 4. Create optimistic message
+      const optimisticMessage = {
+        _id: tempId,
+        senderId: user._id,
+        recipientId: selectedChat._id,
+        text: text,
+        timestamp: timestamp, 
+        createdAt: timestamp,
+        readBy: [user._id],
+        deletedEveryone: false,
+        deletedFor: [],
+        messageType: messageType, // Add to optimistic message
+        fileUrl: fileUrl          // Add to optimistic message
+      };
+
+      // 5. Emit and update state
+      socket.current.emit('sendMessage', serverMessageData);
+      setMessages(prevMessages => [...prevMessages, optimisticMessage]);
+
+    } catch (err) {
+      console.error("File upload failed:", err.response ? err.response.data : err.message);
+      alert("File upload failed.");
+    }
+    
+    // Clear the file input so user can select same file again
+    if(fileInputRef.current) {
+        fileInputRef.current.value = null;
+    }
   };
 
   const handleStartNewChat = (chatUser) => {
@@ -491,7 +503,6 @@ function Dashboard() {
 
   const showContextMenu = (e, message) => {
       e.preventDefault();
-      // Block menu for temporary messages or already deleted messages
       if (message.deletedEveryone || !message._id || message._id.startsWith('temp_')) {
           return;
       }
@@ -500,23 +511,19 @@ function Dashboard() {
   const closeContextMenu = () => setContextMenu(null);
 
   const handleDeleteMessage = async (message, type) => {
-      // This check is still important
       if (!message._id || message._id.startsWith('temp_')) {
           console.warn("Cannot delete unsaved message.");
           closeContextMenu();
           return;
       }
-
       closeContextMenu();
       const token = localStorage.getItem('token');
       const config = {
           headers: { Authorization: `Bearer ${token}` },
           params: { type }
       };
-
       try {
           const res = await axios.delete(`http://localhost:3001/api/messages/${message._id}`, config);
-
           if (type === 'me') {
               setMessages(prev => prev.filter(msg => msg._id !== message._id));
           } else if (type === 'everyone') {
@@ -563,6 +570,7 @@ function Dashboard() {
           animate={{ x: selectedChat && window.innerWidth < 768 ? '-100%' : '0%' }}
           transition={{ duration: 0.3, ease: 'easeInOut' }}
         >
+          {/* --- Sidebar Header (Unchanged) --- */}
           <header className="flex items-center justify-between p-4 border-b border-white/10 flex-shrink-0">
             <h2 className="text-lg font-bold text-white">{user.username}</h2>
             <div className="flex items-center gap-2">
@@ -570,12 +578,14 @@ function Dashboard() {
                 <button onClick={() => setIsSettingsOpen(true)} className="text-gray-400 hover:text-white"><Cog6ToothIcon className="h-6 w-6" /></button>
             </div>
           </header>
+          {/* --- Sidebar Search (Unchanged) --- */}
           <div className="p-4 border-b border-white/10">
             <div className="relative">
               <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
               <input type="text" placeholder="Search" className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-900 border border-gray-700 focus:outline-none focus:ring-1 focus:ring-teal-500" />
             </div>
           </div>
+          {/* --- Sidebar Tabs (Unchanged) --- */}
           <div className="p-4 border-b border-gray-700">
             <div className="flex space-x-4">
               {['All', 'Friends', 'Groups'].map(tab => (
@@ -587,6 +597,8 @@ function Dashboard() {
               ))}
             </div>
           </div>
+          
+          {/* --- (!!!) UPDATED CONVERSATION LIST (!!!) --- */}
           <div className="flex-grow overflow-y-auto">
             {conversations.map(convo => {
               const otherUser = convo.members.find(member => member._id !== user._id);
@@ -604,6 +616,16 @@ function Dashboard() {
                       } catch (err) { console.error("Failed to mark messages as read", err); }
                   }
               };
+              
+              // --- (!!!) UPDATE LAST MESSAGE PREVIEW (!!!) ---
+              const lastMessageText = () => {
+                  if (!convo.lastMessage) return "No messages yet";
+                  // Check messageType first
+                  if (convo.lastMessage.messageType === 'image') return "Sent an image";
+                  if (convo.lastMessage.messageType === 'file') return "Sent a file";
+                  // Fallback to text
+                  return convo.lastMessage.text;
+              }
 
               return (
                 <div
@@ -618,7 +640,8 @@ function Dashboard() {
                   </div>
                   <div className="ml-4 flex-grow z-10 overflow-hidden">
                     <p className="font-semibold text-white">{otherUser.username}</p>
-                    <p className="text-sm text-gray-400 truncate">{convo.lastMessage?.text || "No messages yet"}</p>
+                    {/* --- Use new lastMessageText function --- */}
+                    <p className="text-sm text-gray-400 truncate">{lastMessageText()}</p>
                   </div>
                   {convo.unreadCount > 0 && (
                       <div className="ml-2 flex-shrink-0 z-10">
@@ -642,6 +665,7 @@ function Dashboard() {
                 exit={{ x: '100%' }}
                 transition={{ duration: 0.3, ease: 'easeInOut' }}
             >
+              {/* --- Chat Header (Unchanged) --- */}
               <header onClick={() => setIsInfoPanelOpen(true)} className="flex items-center justify-between p-4 bg-black/20 backdrop-blur-xl border-b border-white/10 flex-shrink-0 cursor-pointer">
                 <div className="flex items-center gap-4">
                   <button onClick={(e) => {e.stopPropagation(); setSelectedChat(null)}} className="md:hidden text-gray-400 hover:text-white">
@@ -665,8 +689,51 @@ function Dashboard() {
                   <button className="hover:text-white"><EllipsisVerticalIcon className="h-6 w-6" /></button>
                 </div>
               </header>
+              
+              {/* --- (!!!) UPDATED CHAT CONTAINER (!!!) --- */}
               <div ref={chatContainerRef} className="flex-grow p-6 overflow-y-auto bg-black/20 relative" onClick={closeContextMenu}>
-                {messages.map((msg, index) => (
+                {messages.map((msg, index) => {
+                  
+                  // --- NEW: Message Content Renderer ---
+                  const renderMessageContent = () => {
+                    if (msg.deletedEveryone) {
+                      return <span className="italic text-gray-400 text-sm">🗑️ This message was deleted</span>;
+                    }
+                    
+                    switch (msg.messageType) {
+                      case 'image':
+                        return (
+                          <img 
+                            src={msg.fileUrl} 
+                            alt="Uploaded content" 
+                            className="max-w-xs md:max-w-sm rounded-lg cursor-pointer" 
+                            onClick={() => window.open(msg.fileUrl, '_blank')}
+                          />
+                        );
+                      case 'file':
+                        return (
+                          <a 
+                            href={msg.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            // Use a consistent background for file links
+                            className={`flex items-center gap-3 p-3 rounded-lg 
+                              ${msg.senderId === user._id ? 'bg-teal-700 hover:bg-teal-800' : 'bg-gray-800 hover:bg-gray-700'}`}
+                          >
+                            <DocumentIcon className="h-8 w-8 text-teal-300 flex-shrink-0" />
+                            <div className="flex flex-col overflow-hidden">
+                              <span className="font-semibold truncate">{msg.text}</span>
+                              <span className="text-xs text-gray-300">Click to download</span>
+                            </div>
+                          </a>
+                        );
+                      case 'text':
+                      default:
+                        return <span>{msg.text}</span>;
+                    }
+                  };
+
+                  return (
                    <div
                     key={msg._id || msg.timestamp || index}
                     onContextMenu={(e) => showContextMenu(e, msg)}
@@ -675,22 +742,51 @@ function Dashboard() {
                       initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                       className={`flex ${msg.senderId === user._id ? 'justify-end' : 'justify-start'} mb-4`}
                     >
-                      <div className={`rounded-2xl py-2 px-4 max-w-lg flex items-center gap-2 cursor-pointer ${msg.senderId === user._id ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
-                        {msg.deletedEveryone ? (
-                           <span className="italic text-gray-400 text-sm">🗑️ This message was deleted</span>
-                        ) : (
-                           <span>{msg.text}</span>
+                      <div 
+                        className={`rounded-2xl max-w-lg flex items-center gap-2 
+                          ${msg.senderId === user._id ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}
+                          ${msg.messageType === 'text' ? 'py-2 px-4' : ''} 
+                          ${msg.messageType !== 'text' ? (msg.messageType === 'image' ? 'p-1' : 'p-2') : ''} 
+                        `}
+                      >
+                        {renderMessageContent()}
+                        
+                        {msg.senderId === user._id && !msg.deletedEveryone && (
+                          <CheckCircleIcon 
+                            className={`h-4 w-4 text-teal-200 flex-shrink-0 
+                            ${msg.messageType !== 'text' ? 'self-end' : ''}`} 
+                          />
                         )}
-                        {msg.senderId === user._id && !msg.deletedEveryone && <CheckCircleIcon className="h-4 w-4 text-teal-200 flex-shrink-0" />}
                       </div>
                     </motion.div>
                   </div>
-                ))}
+                )})}
                 {isTyping && <TypingIndicator />}
               </div>
+              
+              {/* --- (!!!) UPDATED FOOTER (!!!) --- */}
               <footer className="p-4 bg-black/20 backdrop-blur-xl border-t border-white/10 flex-shrink-0">
+                {/* --- (1) ADD HIDDEN FILE INPUT --- */}
+                <input 
+                  type="file" 
+                  ref={fileInputRef} 
+                  onChange={handleFileChange}
+                  className="hidden" 
+                />
+              
                 <form onSubmit={handleSendMessage} className="flex items-center bg-gray-900/50 rounded-lg px-2">
                   <motion.button type="button" whileTap={{ scale: 0.9 }} className="text-gray-400 hover:text-white p-2"><PlusCircleIcon className="h-6 w-6" /></motion.button>
+                  
+                  {/* --- (2) ADD FILE BUTTON --- */}
+                  <motion.button 
+                    type="button" 
+                    whileTap={{ scale: 0.9 }} 
+                    className="text-gray-400 hover:text-white p-2"
+                    onClick={() => fileInputRef.current && fileInputRef.current.click()} // <-- Triggers input
+                  >
+                    <PaperClipIcon className="h-6 w-6" />
+                  </motion.button>
+                  
                   <TextareaAutosize
                     placeholder="Type a message..."
                     value={newMessage}
@@ -708,6 +804,8 @@ function Dashboard() {
             </motion.main>
           )}
         </AnimatePresence>
+        
+        {/* --- Context Menu (Unchanged) --- */}
         <AnimatePresence>
         {contextMenu && (
             <MessageContextMenu
@@ -716,12 +814,16 @@ function Dashboard() {
             />
         )}
         </AnimatePresence>
+        
+        {/* --- Empty State (Unchanged) --- */}
         {!selectedChat && (
             <div className="hidden md:flex flex-grow flex-col items-center justify-center h-full text-center bg-gray-900">
               <h2 className="text-2xl font-semibold text-white">Select a chat to start messaging</h2>
               <p className="text-gray-500 mt-2">Your conversations will appear in the sidebar.</p>
             </div>
         )}
+        
+        {/* --- Contact Info Panel (Unchanged) --- */}
         <ContactInfoPanel chat={selectedChat} isOpen={isInfoPanelOpen} closePanel={() => setIsInfoPanelOpen(false)} onlineUsers={onlineUsers} />
       </div>
     </div>

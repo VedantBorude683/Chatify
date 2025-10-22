@@ -4,10 +4,12 @@ const { Server } = require("socket.io");
 const cors = require('cors');
 const dotenv = require('dotenv');
 const mongoose = require('mongoose');
+const path = require('path'); // <-- ADDED for file paths
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/user');
 const messageRoutes = require('./routes/messages');
 const conversationRoutes = require('./routes/conversations');
+const uploadRoutes = require('./routes/upload'); // <-- ADDED for uploads
 const Message = require('./models/Message');
 const Conversation = require('./models/Conversation');
 
@@ -29,10 +31,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// --- ADD STATIC FILE SERVING ---
+// This makes your 'uploads' folder public
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// --- ROUTES ---
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/conversations', conversationRoutes);
+app.use('/api/upload', uploadRoutes); // <-- ADDED upload route
 
 app.use((err, req, res, next) => {
   console.error("--- UNHANDLED ERROR ---");
@@ -73,10 +81,17 @@ io.on('connection', (socket) => {
     io.emit('getOnlineUsers', Object.keys(onlineUsers));
   });
 
-  // --- (!!!) CORRECTED 'sendMessage' LISTENER (!!!) ---
+  // --- (!!!) UPDATED 'sendMessage' LISTENER (!!!) ---
   socket.on('sendMessage', async (data) => {
-    // 1. Destructure *all* data from client, including our new clientId and timestamp
-    const { recipientId, senderId, text, timestamp, clientId } = data;
+    const { 
+      recipientId, 
+      senderId, 
+      text, 
+      timestamp, 
+      clientId,
+      messageType, // <-- ADDED
+      fileUrl      // <-- ADDED
+    } = data;
     
     try {
       let conversation = await Conversation.findOne({ members: { $all: [senderId, recipientId] } });
@@ -88,25 +103,24 @@ io.on('connection', (socket) => {
         conversationId: conversation._id,
         senderId,
         text,
-        // Use the client's timestamp for consistency
         timestamp: timestamp || new Date(), 
-        readBy: [senderId]
+        readBy: [senderId],
+        // --- ADD NEW FIELDS ---
+        messageType: messageType || 'text',
+        fileUrl: fileUrl || null
       });
       
       const savedMessage = await newMessage.save();
       
+      // Update last message in conversation
       conversation.lastMessage = savedMessage._id;
       await conversation.save();
 
-      // --- (!!!) THIS IS THE FIX (!!!) ---
-      
-      // 2. Convert the Mongoose document to a plain JS object
+      // Convert to plain object to add clientId
       const messageToSend = savedMessage.toObject();
-      
-      // 3. Add the clientId back so the client can find its temp message
       messageToSend.clientId = clientId; 
 
-      // 4. Send to the recipient
+      // Send to recipient
       const recipientSocketId = onlineUsers[recipientId];
       if (recipientSocketId) {
         io.to(recipientSocketId).emit('receiveMessage', messageToSend);
@@ -116,8 +130,7 @@ io.on('connection', (socket) => {
         });
       }
       
-      // 5. (!!!) CRITICAL: Send confirmation back to the *sender*
-      // This tells the sender's client to replace the temp message
+      // Send confirmation back to sender
       socket.emit('receiveMessage', messageToSend);
 
     } catch (err) {
@@ -135,7 +148,7 @@ io.on('connection', (socket) => {
   socket.on('stopTyping', (data) => {
     const recipientSocketId = onlineUsers[data.recipientId];
     if (recipientSocketId) {
-      io.to(recipientSocketId).emit('userStoppedTyping', { senderId: data.senderId });
+      io.to(recipientSocketId).emit('userStoppedTpng', { senderId: data.senderId });
     }
   });
   

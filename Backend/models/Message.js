@@ -13,6 +13,15 @@ const MessageSchema = new mongoose.Schema(
     text: {
       type: String,
     },
+    messageType: {
+    type: String,
+    enum: ['text', 'image', 'file'], // 'image' for <img>, 'file' for <a>
+    default: 'text'
+  },
+  fileUrl: {
+    type: String,
+    default: null
+  },
     readBy: {
       type: [mongoose.Schema.Types.ObjectId],
       ref: 'User',
