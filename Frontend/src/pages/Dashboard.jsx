@@ -7,7 +7,7 @@ import { io } from 'socket.io-client';
 import { Dialog, Transition, Menu } from '@headlessui/react';
 import { 
   MagnifyingGlassIcon, BellIcon, PlusCircleIcon, Cog6ToothIcon, PhoneIcon, VideoCameraIcon, 
-  PaperAirplaneIcon, FaceSmileIcon, XMarkIcon, CheckCircleIcon, EllipsisVerticalIcon, ArrowLeftIcon 
+  PaperAirplaneIcon, FaceSmileIcon, XMarkIcon, CheckCircleIcon, EllipsisVerticalIcon, ArrowLeftIcon, TrashIcon
 } from '@heroicons/react/24/outline';
 import { HashtagIcon, LockClosedIcon } from '@heroicons/react/24/solid';
 
@@ -125,6 +125,90 @@ const NewChatModal = ({ isOpen, closeModal, usersList, onStartChat }) => (
   </Transition>
 );
 
+// --- NEW: Context Menu Component with your provided design ---
+const MessageContextMenu = ({ x, y, message, user, onDelete, closeMenu }) => {
+  // Check if message has a database ID before allowing deletion
+  if (!message._id || message._id.startsWith('temp_')) {
+    // This message is temporary (optimistic update) and can't be deleted from the server yet.
+    return null;
+  }
+
+  const isSender = message.senderId === user._id;
+  const readByOthers = message.readBy?.some(readerId => readerId !== user._id) ?? false;
+  const alreadyDeletedEveryone = message.deletedEveryone;
+  const showDeleteForEveryone = isSender && !readByOthers && !alreadyDeletedEveryone;
+
+  // Calculate position
+  const menuWidth = 190;
+  const menuHeight = showDeleteForEveryone ? 90 : 50; // Adjust height based on options
+  let left = x;
+  let top = y;
+  let direction = "down";
+
+  if (x + menuWidth > window.innerWidth) {
+    left = window.innerWidth - menuWidth - 10;
+  }
+  if (y + menuHeight > window.innerHeight) {
+    top = y - menuHeight - 10;
+    direction = "up";
+  }
+
+  // Effect to close menu on outside click
+  useEffect(() => {
+    const handleClickOutside = () => closeMenu();
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [closeMenu]);
+
+  return (
+    <motion.div
+      key="context-menu"
+      className="absolute backdrop-blur-md bg-gray-800/90 text-white rounded-xl shadow-2xl border border-gray-700/50 overflow-hidden z-50"
+      style={{ top, left, transformOrigin: direction === "up" ? "bottom center" : "top center" }}
+      initial={{
+        opacity: 0,
+        scale: 0.8,
+        y: direction === "up" ? 15 : -15,
+      }}
+      animate={{
+        opacity: 1,
+        scale: 1,
+        y: 0,
+        transition: { type: "spring", stiffness: 200, damping: 18 },
+      }}
+      exit={{
+        opacity: 0,
+        scale: 0.9,
+        y: direction === "up" ? 15 : -15,
+        transition: { duration: 0.15 },
+      }}
+    >
+      <motion.button
+        whileHover={{ backgroundColor: "rgba(255,255,255,0.05)", x: 3 }}
+        whileTap={{ scale: 0.97 }}
+        className="block w-full text-left px-5 py-2 text-sm font-medium hover:text-white transition-all duration-150"
+        onClick={() => onDelete(message, 'me')}
+      >
+        <TrashIcon className="h-4 w-4 inline mr-2" /> Delete for me
+      </motion.button>
+
+      {showDeleteForEveryone && (
+        <motion.button
+          whileHover={{ backgroundColor: "rgba(239,68,68,0.15)", x: 3 }}
+          whileTap={{ scale: 0.97 }}
+          className="block w-full text-left px-5 py-2 text-sm font-medium text-red-400 hover:text-red-500 transition-all duration-150"
+          onClick={() => onDelete(message, 'everyone')}
+        >
+          <TrashIcon className="h-4 w-4 inline mr-2" /> Delete for everyone
+        </motion.button>
+      )}
+    </motion.div>
+  );
+};
+
+
 function Dashboard() {
   const [user, setUser] = useState(null);
   const [selectedChat, setSelectedChat] = useState(null);
@@ -138,15 +222,18 @@ function Dashboard() {
   const [isTyping, setIsTyping] = useState(false);
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState([]);
+  const [contextMenu, setContextMenu] = useState(null);
   const socket = useRef(null);
   const typingTimeout = useRef(null);
   const navigate = useNavigate();
+  const chatContainerRef = useRef(null);
 
   const servers = [
     { id: '1', name: 'Work', icon: <HashtagIcon className="h-6 w-6 text-white" /> },
     { id: '2', name: 'Gaming', icon: <LockClosedIcon className="h-6 w-6 text-white" /> },
   ];
 
+  // --- All useEffect hooks remain the same ---
   useEffect(() => {
     const fetchUserData = async () => {
       try {
@@ -170,7 +257,7 @@ function Dashboard() {
         const token = localStorage.getItem('token');
         const config = { headers: { Authorization: `Bearer ${token}` } };
         const convosRes = await axios.get('http://localhost:3001/api/conversations', config);
-        setConversations(convosRes.data); // Backend now sends unreadCount
+        setConversations(convosRes.data);
         const usersRes = await axios.get('http://localhost:3001/api/user/', config);
         setUsersList(usersRes.data);
       } catch (err) {
@@ -196,20 +283,27 @@ function Dashboard() {
     }
   }, [user]);
 
-  // Combined effect for receiving messages, typing, and unread notifications
   useEffect(() => {
     if (socket.current) {
       const messageListener = (data) => {
-        if (selectedChat && data.senderId === selectedChat._id) {
-          setIsTyping(false); 
-          setMessages((prevMessages) => [...prevMessages, data]);
-          // Mark as read immediately if the chat is open
-          const token = localStorage.getItem('token');
-          const config = { headers: { Authorization: `Bearer ${token}` } };
-          axios.put(`http://localhost:3001/api/conversations/${data.conversationId}/read`, {}, config)
-            .catch(err => console.error("Auto-mark as read failed", err));
-        }
-        // Update the last message in the conversation list
+        setMessages((prevMessages) => {
+            // Find and replace the temporary message
+            const tempId = `temp_${data.timestamp}`;
+            const existingMsgIndex = prevMessages.findIndex(msg => msg._id === tempId);
+
+            if (existingMsgIndex !== -1) {
+                const updatedMessages = [...prevMessages];
+                updatedMessages[existingMsgIndex] = data;
+                return updatedMessages;
+            } else if (selectedChat && data.senderId === selectedChat._id) {
+                 if (!prevMessages.some(m => m._id === data._id)) {
+                    setIsTyping(false);
+                    return [...prevMessages, data];
+                 }
+            }
+            return prevMessages;
+        });
+
         setConversations(prev => prev.map(convo => {
              if (convo._id === data.conversationId) {
                  return { ...convo, lastMessage: data };
@@ -224,30 +318,44 @@ function Dashboard() {
       const stopTypingListener = (data) => {
         if (selectedChat && data.senderId === selectedChat._id) setIsTyping(false);
       };
-      
+
       const newUnreadListener = (data) => {
           if (!selectedChat || data.senderId !== selectedChat._id) {
-              setConversations(prev => prev.map(convo => 
-                  convo._id === data.conversationId 
-                      ? { ...convo, unreadCount: (convo.unreadCount || 0) + 1 } 
+              setConversations(prev => prev.map(convo =>
+                  convo._id === data.conversationId
+                      ? { ...convo, unreadCount: (convo.unreadCount || 0) + 1 }
                       : convo
               ));
           }
+      };
+      
+      const deleteListener = (data) => {
+         setMessages(prev => prev.map(msg =>
+            msg._id === data.messageId ? { ...msg, deletedEveryone: true, text: "This message was deleted" } : msg
+        ));
+         setConversations(prev => prev.map(convo => {
+             if (convo._id === data.conversationId && convo.lastMessage?._id === data.messageId) {
+                 return { ...convo, lastMessage: { ...convo.lastMessage, text: "This message was deleted"} };
+             }
+             return convo;
+         }));
       };
 
       socket.current.on('receiveMessage', messageListener);
       socket.current.on('userTyping', typingListener);
       socket.current.on('userStoppedTyping', stopTypingListener);
       socket.current.on('newUnreadMessage', newUnreadListener);
+      socket.current.on('messageDeleted', deleteListener);
 
       return () => {
         socket.current.off('receiveMessage', messageListener);
         socket.current.off('userTyping', typingListener);
         socket.current.off('userStoppedTyping', stopTypingListener);
         socket.current.off('newUnreadMessage', newUnreadListener);
+        socket.current.off('messageDeleted', deleteListener);
       };
     }
-  }, [socket.current, selectedChat]); // Dependency is correct
+  }, [socket.current, selectedChat]);
 
   useEffect(() => {
     const fetchMessages = async () => {
@@ -263,23 +371,46 @@ function Dashboard() {
     };
     fetchMessages();
   }, [selectedChat]);
+  
+  useEffect(() => {
+      if (chatContainerRef.current) {
+          chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+      }
+  }, [messages]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
     window.location.href = '/';
   };
-  
+
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (newMessage.trim() === '' || !socket.current || !user || !selectedChat) return;
-    const messageData = {
+    
+    const timestamp = new Date().toISOString();
+    const tempId = `temp_${timestamp}`;
+
+    const optimisticMessage = {
+      _id: tempId,
       senderId: user._id,
       recipientId: selectedChat._id,
       text: newMessage,
-      timestamp: new Date().toISOString(),
+      timestamp: timestamp,
+      createdAt: timestamp,
+      readBy: [user._id],
+      deletedEveryone: false,
+      deletedFor: []
     };
-    socket.current.emit('sendMessage', messageData);
-    setMessages(prevMessages => [...prevMessages, messageData]);
+
+    const serverMessageData = {
+      senderId: user._id,
+      recipientId: selectedChat._id,
+      text: newMessage,
+      timestamp: timestamp
+    };
+
+    socket.current.emit('sendMessage', serverMessageData);
+    setMessages(prevMessages => [...prevMessages, optimisticMessage]);
     setNewMessage('');
     if (typingTimeout.current) clearTimeout(typingTimeout.current);
     socket.current.emit('stopTyping', { senderId: user._id, recipientId: selectedChat._id });
@@ -300,6 +431,54 @@ function Dashboard() {
     }, 2000);
   };
 
+  const showContextMenu = (e, message) => {
+      e.preventDefault();
+      // Block menu for temporary messages or already deleted messages
+      if (message.deletedEveryone || !message._id || message._id.startsWith('temp_')) {
+          return;
+      }
+      setContextMenu({ x: e.clientX, y: e.clientY, message });
+  };
+  const closeContextMenu = () => setContextMenu(null);
+
+  const handleDeleteMessage = async (message, type) => {
+      if (!message._id || message._id.startsWith('temp_')) {
+          console.warn("Cannot delete unsaved message.");
+          closeContextMenu();
+          return;
+      }
+
+      closeContextMenu();
+      const token = localStorage.getItem('token');
+      const config = {
+          headers: { Authorization: `Bearer ${token}` },
+          params: { type }
+      };
+
+      try {
+          const res = await axios.delete(`http://localhost:3001/api/messages/${message._id}`, config);
+
+          if (type === 'me') {
+              setMessages(prev => prev.filter(msg => msg._id !== message._id));
+          } else if (type === 'everyone') {
+              const updatedMsg = res.data.updatedMessage;
+              setMessages(prev => prev.map(msg =>
+                  msg._id === message._id ? updatedMsg : msg
+              ));
+              if (socket.current && selectedChat) {
+                  socket.current.emit('notifyDeleteEveryone', {
+                      messageId: message._id,
+                      conversationId: message.conversationId,
+                      recipientId: selectedChat._id
+                  });
+              }
+          }
+      } catch (err) {
+          console.error("Failed to delete message:", err);
+          alert(err.response?.data?.message || err.response?.data || "Could not delete message.");
+      }
+  };
+
   if (!user) {
     return <div className="flex h-screen items-center justify-center bg-gray-900 text-white">Loading...</div>;
   }
@@ -307,10 +486,10 @@ function Dashboard() {
   return (
     <div className="flex h-screen w-full bg-black text-gray-300 overflow-hidden noise-bg">
       <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[200%] h-[200%] bg-gradient-to-br from-teal-500/20 via-purple-500/10 to-transparent blur-3xl opacity-50 animate-pulse" style={{ animationDuration: '15s' }}></div>
-      
+
       <SettingsModal isOpen={isSettingsOpen} closeModal={() => setIsSettingsOpen(false)} user={user} handleLogout={handleLogout} />
       <NewChatModal isOpen={isNewChatModalOpen} closeModal={() => setIsNewChatModalOpen(false)} usersList={usersList} onStartChat={handleStartNewChat} />
-      
+
       <motion.div initial={{ x: -100 }} animate={{ x: 0 }} transition={{ duration: 0.5 }}
         className="hidden md:flex w-20 h-screen bg-black/20 backdrop-blur-xl border-r border-white/5 flex-col items-center py-4 space-y-4 flex-shrink-0"
       >
@@ -318,7 +497,7 @@ function Dashboard() {
       </motion.div>
 
       <div className="flex-grow relative overflow-hidden flex">
-        <motion.aside 
+        <motion.aside
           className="absolute top-0 left-0 h-full w-full md:w-[350px] md:static bg-black/20 backdrop-blur-xl border-r border-white/5 flex flex-col flex-shrink-0"
           initial={false}
           animate={{ x: selectedChat && window.innerWidth < 768 ? '-100%' : '0%' }}
@@ -353,29 +532,22 @@ function Dashboard() {
               const otherUser = convo.members.find(member => member._id !== user._id);
               if (!otherUser) return null;
               const isOnline = onlineUsers.includes(otherUser._id);
-              
+
               const handleSelectChat = async (convo, chatUser) => {
                   setSelectedChat(chatUser);
-                  // Fetch messages is handled by useEffect dependent on selectedChat
-                  
-                  // Mark messages as read if necessary
                   if (convo.unreadCount > 0) {
                       try {
                           const token = localStorage.getItem('token');
                           const config = { headers: { Authorization: `Bearer ${token}` } };
                           await axios.put(`http://localhost:3001/api/conversations/${convo._id}/read`, {}, config);
-                          
-                          // Update UI immediately
-                          setConversations(prev => prev.map(c => 
-                              c._id === convo._id ? { ...c, unreadCount: 0 } : c
-                          ));
+                          setConversations(prev => prev.map(c => c._id === convo._id ? { ...c, unreadCount: 0 } : c));
                       } catch (err) { console.error("Failed to mark messages as read", err); }
                   }
               };
 
               return (
-                <div 
-                  key={convo._id} 
+                <div
+                  key={convo._id}
                   onClick={() => handleSelectChat(convo, otherUser)}
                   className={`relative flex items-center p-4 cursor-pointer border-l-2 transition-colors ${selectedChat?._id === otherUser._id ? 'border-teal-400' : 'border-transparent hover:bg-white/5'}`}
                 >
@@ -388,7 +560,6 @@ function Dashboard() {
                     <p className="font-semibold text-white">{otherUser.username}</p>
                     <p className="text-sm text-gray-400 truncate">{convo.lastMessage?.text || "No messages yet"}</p>
                   </div>
-                  {/* Display the unread count badge */}
                   {convo.unreadCount > 0 && (
                       <div className="ml-2 flex-shrink-0 z-10">
                         <span className="h-6 w-6 flex items-center justify-center rounded-full bg-teal-500 text-white text-xs font-bold">
@@ -404,7 +575,7 @@ function Dashboard() {
 
         <AnimatePresence>
           {selectedChat && (
-            <motion.main 
+            <motion.main
                 className="absolute top-0 left-0 h-full w-full md:static flex-grow flex flex-col bg-gray-900"
                 initial={{ x: '100%' }}
                 animate={{ x: '0%' }}
@@ -434,16 +605,26 @@ function Dashboard() {
                   <button className="hover:text-white"><EllipsisVerticalIcon className="h-6 w-6" /></button>
                 </div>
               </header>
-              <div className="flex-grow p-6 overflow-y-auto bg-black/20">
+              <div ref={chatContainerRef} className="flex-grow p-6 overflow-y-auto bg-black/20 relative" onClick={closeContextMenu}>
                 {messages.map((msg, index) => (
-                  <motion.div key={index} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                    className={`flex ${msg.senderId === user._id ? 'justify-end' : 'justify-start'} mb-4`}
+                   <div
+                    key={msg._id || msg.timestamp || index}
+                    onContextMenu={(e) => showContextMenu(e, msg)}
                   >
-                    <div className={`rounded-2xl py-2 px-4 max-w-lg flex items-center gap-2 ${msg.senderId === user._id ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
-                      <span>{msg.text}</span>
-                      {msg.senderId === user._id && <CheckCircleIcon className="h-4 w-4 text-teal-200" />}
-                    </div>
-                  </motion.div>
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                      className={`flex ${msg.senderId === user._id ? 'justify-end' : 'justify-start'} mb-4`}
+                    >
+                      <div className={`rounded-2xl py-2 px-4 max-w-lg flex items-center gap-2 cursor-pointer ${msg.senderId === user._id ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
+                        {msg.deletedEveryone ? (
+                           <span className="italic text-gray-400 text-sm">🗑️ This message was deleted</span>
+                        ) : (
+                           <span>{msg.text}</span>
+                        )}
+                        {msg.senderId === user._id && !msg.deletedEveryone && <CheckCircleIcon className="h-4 w-4 text-teal-200 flex-shrink-0" />}
+                      </div>
+                    </motion.div>
+                  </div>
                 ))}
                 {isTyping && <TypingIndicator />}
               </div>
@@ -466,6 +647,14 @@ function Dashboard() {
               </footer>
             </motion.main>
           )}
+        </AnimatePresence>
+        <AnimatePresence>
+        {contextMenu && (
+            <MessageContextMenu
+                x={contextMenu.x} y={contextMenu.y} message={contextMenu.message}
+                user={user} onDelete={handleDeleteMessage} closeMenu={closeContextMenu}
+            />
+        )}
         </AnimatePresence>
         {!selectedChat && (
             <div className="hidden md:flex flex-grow flex-col items-center justify-center h-full text-center bg-gray-900">

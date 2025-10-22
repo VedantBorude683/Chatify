@@ -43,14 +43,14 @@ app.use((err, req, res, next) => {
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*",
+    origin: "*", // Adjust in production
     methods: ["GET", "POST"]
   }
 });
 
 const PORT = process.env.PORT || 3001;
 
-let onlineUsers = {}; 
+let onlineUsers = {}; // Maps userId to socketId
 
 const addUser = (userId, socketId) => {
   onlineUsers[userId] = socketId;
@@ -75,36 +75,25 @@ io.on('connection', (socket) => {
 
   socket.on('sendMessage', async (data) => {
     const { recipientId, senderId, text } = data;
-    
     try {
-      let conversation = await Conversation.findOne({
-        members: { $all: [senderId, recipientId] },
-      });
-
+      let conversation = await Conversation.findOne({ members: { $all: [senderId, recipientId] } });
       if (!conversation) {
-        conversation = new Conversation({
-          members: [senderId, recipientId],
-        });
+        conversation = new Conversation({ members: [senderId, recipientId] });
       }
-
       const newMessage = new Message({
         conversationId: conversation._id,
         senderId,
         text,
-        readBy: [senderId] // Mark as read by sender
+        readBy: [senderId]
       });
-
       const savedMessage = await newMessage.save();
       conversation.lastMessage = savedMessage._id;
       await conversation.save();
-
       const recipientSocketId = onlineUsers[recipientId];
       if (recipientSocketId) {
-        // Send the message itself
         io.to(recipientSocketId).emit('receiveMessage', savedMessage);
-        // Emit notification for unread update
         io.to(recipientSocketId).emit('newUnreadMessage', { 
-            conversationId: conversation._id.toString(), // Send ID as string
+            conversationId: conversation._id.toString(),
             senderId: senderId 
         });
       }
@@ -125,6 +114,18 @@ io.on('connection', (socket) => {
     if (recipientSocketId) {
       io.to(recipientSocketId).emit('userStoppedTyping', { senderId: data.senderId });
     }
+  });
+  
+  // --- NEW: Handle real-time delete notifications ---
+  socket.on('notifyDeleteEveryone', (data) => {
+      const { messageId, conversationId, recipientId } = data;
+      const recipientSocketId = onlineUsers[recipientId];
+      if (recipientSocketId) {
+          // Notify the other user(s) in the chat that the message was deleted
+          io.to(recipientSocketId).emit('messageDeleted', { messageId, conversationId });
+      }
+      // Optionally notify sender's other sessions too
+      // socket.broadcast.to(sender's room if implemented).emit('messageDeleted', { messageId, conversationId });
   });
 
   socket.on('disconnect', () => {

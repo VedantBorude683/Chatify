@@ -17,6 +17,16 @@ const MessageSchema = new mongoose.Schema(
       type: [mongoose.Schema.Types.ObjectId],
       ref: 'User',
       default: []
+    },
+    deletedFor: {
+        type: [mongoose.Schema.Types.ObjectId],
+        ref: 'User',
+        default: [],
+    },
+    // Tracks if the message was deleted for everyone
+    deletedEveryone: {
+        type: Boolean,
+        default: false,
     }
   },
   { timestamps: true }
