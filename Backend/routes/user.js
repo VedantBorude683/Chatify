@@ -5,6 +5,29 @@ const authMiddleware = require('../middleware/authMiddleware');
 // @route   GET api/user/me
 // @desc    Get current user's data
 // @access  Private
+router.get('/', authMiddleware, async (req, res, next) => {
+  try {
+    console.log("--- DEBUG: GET /api/user/ ROUTE ---");
+
+    // 1. Log the ID of the user making the request
+    console.log("Logged-in user ID:", req.user.id);
+
+    // 2. Find ALL users in the database first, without any filtering
+    const allUsers = await User.find({}).select('-password');
+    console.log(`Found a total of ${allUsers.length} users in the database.`);
+
+    // 3. Manually filter out the current user
+    const filteredUsers = allUsers.filter(user => user._id.toString() !== req.user.id);
+    console.log(`Returning ${filteredUsers.length} users after filtering.`);
+
+    // 4. Send the final list
+    res.json(filteredUsers);
+
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/me', authMiddleware, async (req, res, next) => {
   try {
     // req.user.id is available from the authMiddleware

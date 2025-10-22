@@ -6,6 +6,10 @@ const dotenv = require('dotenv');
 const mongoose = require('mongoose');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/user');
+const messageRoutes = require('./routes/messages');
+const conversationRoutes = require('./routes/conversations');
+const Message = require('./models/Message');
+const Conversation = require('./models/Conversation');
 
 dotenv.config();
 
@@ -27,6 +31,8 @@ app.use(express.json());
 
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/conversations', conversationRoutes);
 
 app.use((err, req, res, next) => {
   console.error("--- UNHANDLED ERROR ---");
@@ -44,7 +50,6 @@ const io = new Server(server, {
 
 const PORT = process.env.PORT || 3001;
 
-// --- Logic for Private Messaging ---
 let onlineUsers = {}; 
 
 const addUser = (userId, socketId) => {
@@ -63,31 +68,65 @@ const removeUser = (socketId) => {
 io.on('connection', (socket) => {
   console.log(`✅ A user connected: ${socket.id}`);
 
-  // When a user connects, they emit their userId, and we add them to the list
   socket.on('addUser', (userId) => {
     addUser(userId, socket.id);
-    console.log("Online Users Updated:", onlineUsers); // Added log for verification
+    io.emit('getOnlineUsers', Object.keys(onlineUsers));
   });
 
-  // When a message is sent, find the recipient's socketId and send only to them
-  socket.on('sendMessage', (data) => {
-    const { recipientId, ...messageData } = data;
-    const recipientSocketId = onlineUsers[recipientId];
+  socket.on('sendMessage', async (data) => {
+    const { recipientId, senderId, text } = data;
+    
+    try {
+      let conversation = await Conversation.findOne({
+        members: { $all: [senderId, recipientId] },
+      });
 
+      if (!conversation) {
+        conversation = new Conversation({
+          members: [senderId, recipientId],
+        });
+      }
+
+      const newMessage = new Message({
+        conversationId: conversation._id,
+        senderId,
+        text,
+        readBy: [senderId] // UPDATED: Mark message as read by the sender
+      });
+
+      const savedMessage = await newMessage.save();
+      conversation.lastMessage = savedMessage._id;
+      await conversation.save();
+
+      const recipientSocketId = onlineUsers[recipientId];
+      if (recipientSocketId) {
+        io.to(recipientSocketId).emit('receiveMessage', savedMessage);
+      }
+    } catch (err) {
+      console.error("Error saving or sending message:", err);
+    }
+  });
+  
+  socket.on('startTyping', (data) => {
+    const recipientSocketId = onlineUsers[data.recipientId];
     if (recipientSocketId) {
-      // This sends the message ONLY to the specific recipient's socket
-      io.to(recipientSocketId).emit('receiveMessage', messageData);
-    } else {
-      console.log(`FAILURE: Recipient ${recipientId} is NOT in the onlineUsers map.`);
+      io.to(recipientSocketId).emit('userTyping', { senderId: data.senderId });
+    }
+  });
+
+  socket.on('stopTyping', (data) => {
+    const recipientSocketId = onlineUsers[data.recipientId];
+    if (recipientSocketId) {
+      io.to(recipientSocketId).emit('userStoppedTyping', { senderId: data.senderId });
     }
   });
 
   socket.on('disconnect', () => {
     removeUser(socket.id);
     console.log(`❌ A user disconnected: ${socket.id}`);
+    io.emit('getOnlineUsers', Object.keys(onlineUsers));
   });
 });
-// --- End of Logic ---
 
 server.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);

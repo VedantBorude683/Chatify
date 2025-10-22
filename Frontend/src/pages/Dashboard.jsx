@@ -7,7 +7,7 @@ import { io } from 'socket.io-client';
 import { Dialog, Transition, Menu } from '@headlessui/react';
 import { 
   MagnifyingGlassIcon, BellIcon, PlusCircleIcon, Cog6ToothIcon, PhoneIcon, VideoCameraIcon, 
-  PaperAirplaneIcon, FaceSmileIcon, XMarkIcon, CheckCircleIcon, EllipsisVerticalIcon 
+  PaperAirplaneIcon, FaceSmileIcon, XMarkIcon, CheckCircleIcon, EllipsisVerticalIcon, ArrowLeftIcon 
 } from '@heroicons/react/24/outline';
 import { HashtagIcon, LockClosedIcon } from '@heroicons/react/24/solid';
 
@@ -66,9 +66,9 @@ const SettingsModal = ({ isOpen, closeModal, user, handleLogout }) => (
   </Transition>
 );
 
-const ContactInfoPanel = ({ chat, isOpen, closePanel }) => (
+const ContactInfoPanel = ({ chat, isOpen, closePanel, onlineUsers }) => (
     <AnimatePresence>
-      {isOpen && (
+      {isOpen && chat && (
         <motion.div
           initial={{ x: '100%' }}
           animate={{ x: 0 }}
@@ -83,7 +83,9 @@ const ContactInfoPanel = ({ chat, isOpen, closePanel }) => (
           <div className="flex flex-col items-center p-6">
             <img src={`https://i.pravatar.cc/150?u=${chat.email}`} alt={chat.username} className="h-24 w-24 rounded-full" />
             <h4 className="mt-4 text-xl font-semibold text-white">{chat.username}</h4>
-            <p className="text-gray-400 text-sm">{chat.status || "No status available"}</p>
+            <p className="text-gray-400 text-sm mt-1">{onlineUsers.includes(chat._id) ? 'Online' : 'Offline'}</p>
+            <p className="text-gray-400 text-sm mt-4">{chat.status || "No status available"}</p>
+            <p className="text-gray-400 text-sm mt-1">{chat.location || "Location not set"}</p>
           </div>
         </motion.div>
       )}
@@ -137,6 +139,7 @@ function Dashboard() {
   const [isNewChatModalOpen, setIsNewChatModalOpen] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const socket = useRef(null);
+  const typingTimeout = useRef(null);
   const navigate = useNavigate();
 
   const servers = [
@@ -167,7 +170,17 @@ function Dashboard() {
         const token = localStorage.getItem('token');
         const config = { headers: { Authorization: `Bearer ${token}` } };
         const convosRes = await axios.get('http://localhost:3001/api/conversations', config);
-        setConversations(convosRes.data);
+        
+        const conversationsWithUnread = await Promise.all(convosRes.data.map(async (convo) => {
+            const otherUser = convo.members.find(member => member._id !== user._id);
+            if (!otherUser) return { ...convo, unreadCount: 0 };
+            
+            const messagesRes = await axios.get(`http://localhost:3001/api/messages/${otherUser._id}`, config);
+            const unreadCount = messagesRes.data.filter(msg => msg.senderId !== user._id && !msg.readBy.includes(user._id)).length;
+            return { ...convo, unreadCount };
+        }));
+        setConversations(conversationsWithUnread);
+        
         const usersRes = await axios.get('http://localhost:3001/api/user/', config);
         setUsersList(usersRes.data);
       } catch (err) {
@@ -197,12 +210,29 @@ function Dashboard() {
     if (socket.current) {
       const messageListener = (data) => {
         if (selectedChat && data.senderId === selectedChat._id) {
+          setIsTyping(false); 
           setMessages((prevMessages) => [...prevMessages, data]);
         }
       };
+      const typingListener = (data) => {
+        if (selectedChat && data.senderId === selectedChat._id) {
+          setIsTyping(true);
+        }
+      };
+      const stopTypingListener = (data) => {
+        if (selectedChat && data.senderId === selectedChat._id) {
+          setIsTyping(false);
+        }
+      };
+      
       socket.current.on('receiveMessage', messageListener);
+      socket.current.on('userTyping', typingListener);
+      socket.current.on('userStoppedTyping', stopTypingListener);
+
       return () => {
         socket.current.off('receiveMessage', messageListener);
+        socket.current.off('userTyping', typingListener);
+        socket.current.off('userStoppedTyping', stopTypingListener);
       };
     }
   }, [socket.current, selectedChat]);
@@ -239,12 +269,23 @@ function Dashboard() {
     socket.current.emit('sendMessage', messageData);
     setMessages(prevMessages => [...prevMessages, messageData]);
     setNewMessage('');
+    if (typingTimeout.current) clearTimeout(typingTimeout.current);
+    socket.current.emit('stopTyping', { senderId: user._id, recipientId: selectedChat._id });
   };
 
   const handleStartNewChat = (chatUser) => {
     setSelectedChat(chatUser);
     setMessages([]);
     setIsNewChatModalOpen(false);
+  };
+
+  const handleTyping = () => {
+    if (!socket.current || !selectedChat) return;
+    socket.current.emit('startTyping', { senderId: user._id, recipientId: selectedChat._id });
+    if (typingTimeout.current) clearTimeout(typingTimeout.current);
+    typingTimeout.current = setTimeout(() => {
+      socket.current.emit('stopTyping', { senderId: user._id, recipientId: selectedChat._id });
+    }, 2000);
   };
 
   if (!user) {
@@ -259,70 +300,108 @@ function Dashboard() {
       <NewChatModal isOpen={isNewChatModalOpen} closeModal={() => setIsNewChatModalOpen(false)} usersList={usersList} onStartChat={handleStartNewChat} />
       
       <motion.div initial={{ x: -100 }} animate={{ x: 0 }} transition={{ duration: 0.5 }}
-        className="w-20 h-screen bg-black/20 backdrop-blur-xl border-r border-white/5 flex flex-col items-center py-4 space-y-4 flex-shrink-0"
+        className="hidden md:flex w-20 h-screen bg-black/20 backdrop-blur-xl border-r border-white/5 flex-col items-center py-4 space-y-4 flex-shrink-0"
       >
         {servers.map((server, index) => <ServerIcon key={server.id} icon={server.icon} name={server.name} active={index === 0} />)}
       </motion.div>
 
-      <motion.aside initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2, duration: 0.5 }}
-        className="w-full md:w-[350px] h-screen bg-black/20 backdrop-blur-xl border-r border-white/5 flex flex-col flex-shrink-0"
-      >
-        <header className="flex items-center justify-between p-4 border-b border-white/10 flex-shrink-0">
-          <h2 className="text-lg font-bold text-white">{user.username}</h2>
-          <button onClick={() => setIsNewChatModalOpen(true)} className="text-gray-400 hover:text-white"><PlusCircleIcon className="h-6 w-6" /></button>
-        </header>
-
-        <div className="p-4 border-b border-white/10">
-          <div className="flex space-x-4">
-            {['All', 'Friends', 'Groups'].map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)}
-                className={`px-3 py-1 text-sm font-semibold rounded-full relative ${activeTab === tab ? 'text-white' : 'text-gray-400 hover:text-white'}`}>
-                {tab}
-                {activeTab === tab && <motion.div className="absolute bottom-[-8px] left-0 right-0 h-0.5 bg-teal-500" layoutId="active-tab-indicator" />}
-              </button>
-            ))}
+      <div className="flex-grow relative overflow-hidden flex">
+        <motion.aside 
+          className="absolute top-0 left-0 h-full w-full md:w-[350px] md:static bg-black/20 backdrop-blur-xl border-r border-white/5 flex flex-col flex-shrink-0"
+          initial={false}
+          animate={{ x: selectedChat && window.innerWidth < 768 ? '-100%' : '0%' }}
+          transition={{ duration: 0.3, ease: 'easeInOut' }}
+        >
+          <header className="flex items-center justify-between p-4 border-b border-white/10 flex-shrink-0">
+            <h2 className="text-lg font-bold text-white">{user.username}</h2>
+            <div className="flex items-center gap-2">
+                <button onClick={() => setIsNewChatModalOpen(true)} className="text-gray-400 hover:text-white"><PlusCircleIcon className="h-6 w-6" /></button>
+                <button onClick={() => setIsSettingsOpen(true)} className="text-gray-400 hover:text-white"><Cog6ToothIcon className="h-6 w-6" /></button>
+            </div>
+          </header>
+          <div className="p-4 border-b border-white/10">
+            <div className="relative">
+              <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+              <input type="text" placeholder="Search" className="w-full pl-10 pr-4 py-2 rounded-lg bg-gray-900 border border-gray-700 focus:outline-none focus:ring-1 focus:ring-teal-500" />
+            </div>
           </div>
-        </div>
-        
-        <div className="flex-grow overflow-y-auto">
-          {conversations.map(convo => {
-            const otherUser = convo.members.find(member => member._id !== user._id);
-            if (!otherUser) return null;
-            const isOnline = onlineUsers.includes(otherUser._id);
+          <div className="p-4 border-b border-gray-700">
+            <div className="flex space-x-4">
+              {['All', 'Friends', 'Groups'].map(tab => (
+                <button key={tab} onClick={() => setActiveTab(tab)}
+                  className={`px-3 py-1 text-sm font-semibold rounded-full relative ${activeTab === tab ? 'text-white' : 'text-gray-400 hover:text-white'}`}>
+                  {tab}
+                  {activeTab === tab && <motion.div className="absolute bottom-[-8px] left-0 right-0 h-0.5 bg-teal-500" layoutId="active-tab-indicator" />}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex-grow overflow-y-auto">
+            {conversations.map(convo => {
+              const otherUser = convo.members.find(member => member._id !== user._id);
+              if (!otherUser) return null;
+              const isOnline = onlineUsers.includes(otherUser._id);
+              
+              const handleSelectChat = async (convo, chatUser) => {
+                  setSelectedChat(chatUser);
+                  if (convo.unreadCount > 0) {
+                      try {
+                          const token = localStorage.getItem('token');
+                          const config = { headers: { Authorization: `Bearer ${token}` } };
+                          await axios.put(`http://localhost:3001/api/conversations/${convo._id}/read`, {}, config);
+                          setConversations(prev => prev.map(c => c._id === convo._id ? { ...c, unreadCount: 0 } : c));
+                      } catch (err) { console.error("Failed to mark messages as read", err); }
+                  }
+              };
 
-            return (
-              <div 
-                key={convo._id} 
-                onClick={() => {
-                  setSelectedChat(otherUser);
-                }}
-                className={`relative flex items-center p-4 cursor-pointer border-l-2 transition-colors ${selectedChat?._id === otherUser._id ? 'border-teal-400' : 'border-transparent hover:bg-white/5'}`}
-              >
-                {selectedChat?._id === otherUser._id && <motion.div layoutId="active-chat-indicator" className="absolute left-0 top-0 bottom-0 w-full h-full bg-gradient-to-r from-teal-500/20 to-transparent" />}
-                <div className="relative z-10">
-                  <img src={`https://i.pravatar.cc/150?u=${otherUser.email}`} alt={otherUser.username} className="h-12 w-12 rounded-full" />
-                   {isOnline && <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-green-400 border-2 border-gray-800 animate-pulse"></span>}
+              return (
+                <div 
+                  key={convo._id} 
+                  onClick={() => handleSelectChat(convo, otherUser)}
+                  className={`relative flex items-center p-4 cursor-pointer border-l-2 transition-colors ${selectedChat?._id === otherUser._id ? 'border-teal-400' : 'border-transparent hover:bg-white/5'}`}
+                >
+                  {selectedChat?._id === otherUser._id && <motion.div layoutId="active-chat-indicator" className="absolute left-0 top-0 bottom-0 w-full h-full bg-gradient-to-r from-teal-500/20 to-transparent" />}
+                  <div className="relative z-10">
+                    <img src={`https://i.pravatar.cc/150?u=${otherUser.email}`} alt={otherUser.username} className="h-12 w-12 rounded-full" />
+                    {isOnline && <span className="absolute bottom-0 right-0 block h-3 w-3 rounded-full bg-green-400 border-2 border-gray-800 animate-pulse"></span>}
+                  </div>
+                  <div className="ml-4 flex-grow z-10 overflow-hidden">
+                    <p className="font-semibold text-white">{otherUser.username}</p>
+                    <p className="text-sm text-gray-400 truncate">{convo.lastMessage?.text || "No messages yet"}</p>
+                  </div>
+                  {convo.unreadCount > 0 && (
+                      <div className="ml-2 flex-shrink-0 z-10">
+                        <span className="h-6 w-6 flex items-center justify-center rounded-full bg-teal-500 text-white text-xs font-bold">
+                          {convo.unreadCount}
+                        </span>
+                      </div>
+                  )}
                 </div>
-                <div className="ml-4 flex-grow z-10 overflow-hidden">
-                  <p className="font-semibold text-white">{otherUser.username}</p>
-                  <p className="text-sm text-gray-400 truncate">{convo.lastMessage?.text || "No messages yet"}</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </motion.aside>
+              );
+            })}
+          </div>
+        </motion.aside>
 
-      <main className="flex-grow flex flex-col relative">
-        <AnimatePresence mode="wait">
-          {selectedChat ? (
-            <motion.div key={selectedChat._id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex-grow flex flex-col">
+        <AnimatePresence>
+          {selectedChat && (
+            <motion.main 
+                className="absolute top-0 left-0 h-full w-full md:static flex-grow flex flex-col bg-gray-900"
+                initial={{ x: '100%' }}
+                animate={{ x: '0%' }}
+                exit={{ x: '100%' }}
+                transition={{ duration: 0.3, ease: 'easeInOut' }}
+            >
               <header onClick={() => setIsInfoPanelOpen(true)} className="flex items-center justify-between p-4 bg-black/20 backdrop-blur-xl border-b border-white/10 flex-shrink-0 cursor-pointer">
                 <div className="flex items-center gap-4">
+                  <button onClick={(e) => {e.stopPropagation(); setSelectedChat(null)}} className="md:hidden text-gray-400 hover:text-white">
+                      <ArrowLeftIcon className="h-6 w-6" />
+                  </button>
                   <img src={`https://i.pravatar.cc/150?u=${selectedChat.email}`} alt={selectedChat.username} className="h-10 w-10 rounded-full" />
                   <div>
                     <p className="font-semibold text-white">{selectedChat.username}</p>
-                    {onlineUsers.includes(selectedChat._id) ? (
+                    {isTyping ? (
+                      <p className="text-xs text-teal-400">Typing...</p>
+                    ) : onlineUsers.includes(selectedChat._id) ? (
                       <p className="text-xs text-green-400">Online</p>
                     ) : (
                       <p className="text-xs text-gray-500">Offline</p>
@@ -337,10 +416,7 @@ function Dashboard() {
               </header>
               <div className="flex-grow p-6 overflow-y-auto bg-black/20">
                 {messages.map((msg, index) => (
-                  <motion.div
-                    key={index}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
+                  <motion.div key={index} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                     className={`flex ${msg.senderId === user._id ? 'justify-end' : 'justify-start'} mb-4`}
                   >
                     <div className={`rounded-2xl py-2 px-4 max-w-lg flex items-center gap-2 ${msg.senderId === user._id ? 'bg-teal-600 text-white' : 'bg-gray-700 text-gray-200'}`}>
@@ -357,9 +433,9 @@ function Dashboard() {
                   <TextareaAutosize
                     placeholder="Type a message..."
                     value={newMessage}
+                    onInput={handleTyping}
                     onChange={(e) => setNewMessage(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }}
-                    maxRows={5}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }} maxRows={5}
                     className="flex-grow px-3 py-3 bg-transparent focus:outline-none text-white resize-none"
                   />
                   <motion.button type="button" whileTap={{ scale: 0.9 }} className="text-gray-400 hover:text-yellow-400 p-2"><FaceSmileIcon className="h-6 w-6" /></motion.button>
@@ -368,20 +444,17 @@ function Dashboard() {
                   </motion.button>
                 </form>
               </footer>
-            </motion.div>
-          ) : (
-             <motion.div 
-              key="welcome" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.5, ease: 'easeInOut' }}
-              className="flex-grow flex flex-col items-center justify-center h-full text-center"
-            >
-              <h2 className="text-2xl font-semibold text-white">Select a chat to start messaging</h2>
-              <p className="text-gray-500 mt-2">Your conversations will appear in the sidebar.</p>
-            </motion.div>
+            </motion.main>
           )}
         </AnimatePresence>
-        <ContactInfoPanel chat={selectedChat} isOpen={isInfoPanelOpen} closePanel={() => setIsInfoPanelOpen(false)} />
-      </main>
+        {!selectedChat && (
+            <div className="hidden md:flex flex-grow flex-col items-center justify-center h-full text-center bg-gray-900">
+              <h2 className="text-2xl font-semibold text-white">Select a chat to start messaging</h2>
+              <p className="text-gray-500 mt-2">Your conversations will appear in the sidebar.</p>
+            </div>
+        )}
+        <ContactInfoPanel chat={selectedChat} isOpen={isInfoPanelOpen} closePanel={() => setIsInfoPanelOpen(false)} onlineUsers={onlineUsers} />
+      </div>
     </div>
   );
 }
