@@ -91,7 +91,7 @@ io.on('connection', (socket) => {
         conversationId: conversation._id,
         senderId,
         text,
-        readBy: [senderId] // UPDATED: Mark message as read by the sender
+        readBy: [senderId] // Mark as read by sender
       });
 
       const savedMessage = await newMessage.save();
@@ -100,7 +100,13 @@ io.on('connection', (socket) => {
 
       const recipientSocketId = onlineUsers[recipientId];
       if (recipientSocketId) {
+        // Send the message itself
         io.to(recipientSocketId).emit('receiveMessage', savedMessage);
+        // Emit notification for unread update
+        io.to(recipientSocketId).emit('newUnreadMessage', { 
+            conversationId: conversation._id.toString(), // Send ID as string
+            senderId: senderId 
+        });
       }
     } catch (err) {
       console.error("Error saving or sending message:", err);
