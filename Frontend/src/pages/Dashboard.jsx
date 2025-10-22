@@ -170,17 +170,7 @@ function Dashboard() {
         const token = localStorage.getItem('token');
         const config = { headers: { Authorization: `Bearer ${token}` } };
         const convosRes = await axios.get('http://localhost:3001/api/conversations', config);
-        
-        const conversationsWithUnread = await Promise.all(convosRes.data.map(async (convo) => {
-            const otherUser = convo.members.find(member => member._id !== user._id);
-            if (!otherUser) return { ...convo, unreadCount: 0 };
-            
-            const messagesRes = await axios.get(`http://localhost:3001/api/messages/${otherUser._id}`, config);
-            const unreadCount = messagesRes.data.filter(msg => msg.senderId !== user._id && !msg.readBy.includes(user._id)).length;
-            return { ...convo, unreadCount };
-        }));
-        setConversations(conversationsWithUnread);
-        
+        setConversations(convosRes.data); // Backend now sends unreadCount
         const usersRes = await axios.get('http://localhost:3001/api/user/', config);
         setUsersList(usersRes.data);
       } catch (err) {
@@ -206,36 +196,58 @@ function Dashboard() {
     }
   }, [user]);
 
+  // Combined effect for receiving messages, typing, and unread notifications
   useEffect(() => {
     if (socket.current) {
       const messageListener = (data) => {
         if (selectedChat && data.senderId === selectedChat._id) {
           setIsTyping(false); 
           setMessages((prevMessages) => [...prevMessages, data]);
+          // Mark as read immediately if the chat is open
+          const token = localStorage.getItem('token');
+          const config = { headers: { Authorization: `Bearer ${token}` } };
+          axios.put(`http://localhost:3001/api/conversations/${data.conversationId}/read`, {}, config)
+            .catch(err => console.error("Auto-mark as read failed", err));
         }
-      };
-      const typingListener = (data) => {
-        if (selectedChat && data.senderId === selectedChat._id) {
-          setIsTyping(true);
-        }
-      };
-      const stopTypingListener = (data) => {
-        if (selectedChat && data.senderId === selectedChat._id) {
-          setIsTyping(false);
-        }
+        // Update the last message in the conversation list
+        setConversations(prev => prev.map(convo => {
+             if (convo._id === data.conversationId) {
+                 return { ...convo, lastMessage: data };
+             }
+             return convo;
+        }));
       };
       
+      const typingListener = (data) => {
+        if (selectedChat && data.senderId === selectedChat._id) setIsTyping(true);
+      };
+      const stopTypingListener = (data) => {
+        if (selectedChat && data.senderId === selectedChat._id) setIsTyping(false);
+      };
+      
+      const newUnreadListener = (data) => {
+          if (!selectedChat || data.senderId !== selectedChat._id) {
+              setConversations(prev => prev.map(convo => 
+                  convo._id === data.conversationId 
+                      ? { ...convo, unreadCount: (convo.unreadCount || 0) + 1 } 
+                      : convo
+              ));
+          }
+      };
+
       socket.current.on('receiveMessage', messageListener);
       socket.current.on('userTyping', typingListener);
       socket.current.on('userStoppedTyping', stopTypingListener);
+      socket.current.on('newUnreadMessage', newUnreadListener);
 
       return () => {
         socket.current.off('receiveMessage', messageListener);
         socket.current.off('userTyping', typingListener);
         socket.current.off('userStoppedTyping', stopTypingListener);
+        socket.current.off('newUnreadMessage', newUnreadListener);
       };
     }
-  }, [socket.current, selectedChat]);
+  }, [socket.current, selectedChat]); // Dependency is correct
 
   useEffect(() => {
     const fetchMessages = async () => {
@@ -344,12 +356,19 @@ function Dashboard() {
               
               const handleSelectChat = async (convo, chatUser) => {
                   setSelectedChat(chatUser);
+                  // Fetch messages is handled by useEffect dependent on selectedChat
+                  
+                  // Mark messages as read if necessary
                   if (convo.unreadCount > 0) {
                       try {
                           const token = localStorage.getItem('token');
                           const config = { headers: { Authorization: `Bearer ${token}` } };
                           await axios.put(`http://localhost:3001/api/conversations/${convo._id}/read`, {}, config);
-                          setConversations(prev => prev.map(c => c._id === convo._id ? { ...c, unreadCount: 0 } : c));
+                          
+                          // Update UI immediately
+                          setConversations(prev => prev.map(c => 
+                              c._id === convo._id ? { ...c, unreadCount: 0 } : c
+                          ));
                       } catch (err) { console.error("Failed to mark messages as read", err); }
                   }
               };
@@ -369,6 +388,7 @@ function Dashboard() {
                     <p className="font-semibold text-white">{otherUser.username}</p>
                     <p className="text-sm text-gray-400 truncate">{convo.lastMessage?.text || "No messages yet"}</p>
                   </div>
+                  {/* Display the unread count badge */}
                   {convo.unreadCount > 0 && (
                       <div className="ml-2 flex-shrink-0 z-10">
                         <span className="h-6 w-6 flex items-center justify-center rounded-full bg-teal-500 text-white text-xs font-bold">
