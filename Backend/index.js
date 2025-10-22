@@ -73,30 +73,53 @@ io.on('connection', (socket) => {
     io.emit('getOnlineUsers', Object.keys(onlineUsers));
   });
 
+  // --- (!!!) CORRECTED 'sendMessage' LISTENER (!!!) ---
   socket.on('sendMessage', async (data) => {
-    const { recipientId, senderId, text } = data;
+    // 1. Destructure *all* data from client, including our new clientId and timestamp
+    const { recipientId, senderId, text, timestamp, clientId } = data;
+    
     try {
       let conversation = await Conversation.findOne({ members: { $all: [senderId, recipientId] } });
       if (!conversation) {
         conversation = new Conversation({ members: [senderId, recipientId] });
       }
+
       const newMessage = new Message({
         conversationId: conversation._id,
         senderId,
         text,
+        // Use the client's timestamp for consistency
+        timestamp: timestamp || new Date(), 
         readBy: [senderId]
       });
+      
       const savedMessage = await newMessage.save();
+      
       conversation.lastMessage = savedMessage._id;
       await conversation.save();
+
+      // --- (!!!) THIS IS THE FIX (!!!) ---
+      
+      // 2. Convert the Mongoose document to a plain JS object
+      const messageToSend = savedMessage.toObject();
+      
+      // 3. Add the clientId back so the client can find its temp message
+      messageToSend.clientId = clientId; 
+
+      // 4. Send to the recipient
       const recipientSocketId = onlineUsers[recipientId];
       if (recipientSocketId) {
-        io.to(recipientSocketId).emit('receiveMessage', savedMessage);
+        io.to(recipientSocketId).emit('receiveMessage', messageToSend);
         io.to(recipientSocketId).emit('newUnreadMessage', { 
             conversationId: conversation._id.toString(),
             senderId: senderId 
         });
       }
+      
+      // 5. (!!!) CRITICAL: Send confirmation back to the *sender*
+      // This tells the sender's client to replace the temp message
+      socket.emit('receiveMessage', messageToSend);
+
     } catch (err) {
       console.error("Error saving or sending message:", err);
     }
@@ -116,16 +139,12 @@ io.on('connection', (socket) => {
     }
   });
   
-  // --- NEW: Handle real-time delete notifications ---
   socket.on('notifyDeleteEveryone', (data) => {
       const { messageId, conversationId, recipientId } = data;
       const recipientSocketId = onlineUsers[recipientId];
       if (recipientSocketId) {
-          // Notify the other user(s) in the chat that the message was deleted
           io.to(recipientSocketId).emit('messageDeleted', { messageId, conversationId });
       }
-      // Optionally notify sender's other sessions too
-      // socket.broadcast.to(sender's room if implemented).emit('messageDeleted', { messageId, conversationId });
   });
 
   socket.on('disconnect', () => {

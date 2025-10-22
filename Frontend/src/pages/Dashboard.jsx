@@ -125,7 +125,7 @@ const NewChatModal = ({ isOpen, closeModal, usersList, onStartChat }) => (
   </Transition>
 );
 
-// --- NEW: Context Menu Component with your provided design ---
+// --- Context Menu Component ---
 const MessageContextMenu = ({ x, y, message, user, onDelete, closeMenu }) => {
   // Check if message has a database ID before allowing deletion
   if (!message._id || message._id.startsWith('temp_')) {
@@ -233,7 +233,7 @@ function Dashboard() {
     { id: '2', name: 'Gaming', icon: <LockClosedIcon className="h-6 w-6 text-white" /> },
   ];
 
-  // --- All useEffect hooks remain the same ---
+  // --- User and Data Fetching ---
   useEffect(() => {
     const fetchUserData = async () => {
       try {
@@ -267,6 +267,7 @@ function Dashboard() {
     fetchData();
   }, [user]);
 
+  // --- Socket Connection ---
   useEffect(() => {
     if (user) {
       const newSocket = io('http://localhost:3001');
@@ -283,27 +284,72 @@ function Dashboard() {
     }
   }, [user]);
 
+  // --- Socket Event Listeners ---
   useEffect(() => {
     if (socket.current) {
+      
+      // --- (!!!) NEW ROBUST MESSAGE LISTENER (!!!) ---
       const messageListener = (data) => {
-        setMessages((prevMessages) => {
-            // Find and replace the temporary message
-            const tempId = `temp_${data.timestamp}`;
-            const existingMsgIndex = prevMessages.findIndex(msg => msg._id === tempId);
+        // --- DEBUGGING: Open your browser console (F12) to see this ---
+        console.log("Socket 'receiveMessage' data:", data);
+        // We expect to see the message from the server.
+        // If it's your own message, it *should* have a 'clientId' property
+        // that matches the 'temp_...' ID.
 
-            if (existingMsgIndex !== -1) {
+        if (!user) return; // Ensure user state is available
+
+        setMessages((prevMessages) => {
+            let tempMsgIndex = -1;
+
+            // --- Path 1: Check for 'clientId' (The robust way) ---
+            // We expect the server to echo back the 'clientId' we sent.
+            if (data.clientId) {
+                tempMsgIndex = prevMessages.findIndex(msg => msg._id === data.clientId);
+            }
+            
+            // --- Path 2: Check for matching timestamp (Original "fast path") ---
+            if (tempMsgIndex === -1 && data.timestamp) {
+                const tempId = `temp_${data.timestamp}`;
+                tempMsgIndex = prevMessages.findIndex(msg => msg._id === tempId);
+            }
+            
+            // --- Path 3: Check for matching text (Unreliable fallback) ---
+            if (tempMsgIndex === -1 && data.senderId === user._id) {
+                tempMsgIndex = prevMessages.findLastIndex(msg =>
+                    msg._id.startsWith('temp_') &&
+                    msg.senderId === user._id &&
+                    msg.text === data.text
+                );
+            }
+
+            // --- If we found the temp message, replace it ---
+            if (tempMsgIndex !== -1) {
+                console.log("SUCCESS: Found and replacing temp message:", prevMessages[tempMsgIndex]._id);
                 const updatedMessages = [...prevMessages];
-                updatedMessages[existingMsgIndex] = data;
+                updatedMessages[tempMsgIndex] = data; // Replace temp with real message
                 return updatedMessages;
-            } else if (selectedChat && data.senderId === selectedChat._id) {
-                 if (!prevMessages.some(m => m._id === data._id)) {
+            }
+
+            // --- If no temp message, it's a new message (from me or other) ---
+            if (selectedChat) {
+                const isFromOtherUser = data.senderId === selectedChat._id;
+                const isFromMe = data.senderId === user._id;
+
+                // Add if it's from the other user OR from me (and unmatched)
+                // AND it's not already in the list
+                if ((isFromOtherUser || isFromMe) && !prevMessages.some(m => m._id === data._id)) {
+                    console.log("Adding new message:", data._id);
                     setIsTyping(false);
                     return [...prevMessages, data];
-                 }
+                }
             }
+            
+            // No change
+            console.log("No action taken for message.");
             return prevMessages;
         });
 
+        // --- Update conversation list ---
         setConversations(prev => prev.map(convo => {
              if (convo._id === data.conversationId) {
                  return { ...convo, lastMessage: data };
@@ -355,8 +401,9 @@ function Dashboard() {
         socket.current.off('messageDeleted', deleteListener);
       };
     }
-  }, [socket.current, selectedChat]);
+  }, [socket.current, selectedChat, user]); // Added user dependency
 
+  // --- Message Fetching and Scrolling ---
   useEffect(() => {
     const fetchMessages = async () => {
       if (!selectedChat) return;
@@ -378,37 +425,48 @@ function Dashboard() {
       }
   }, [messages]);
 
+  // --- Event Handlers ---
   const handleLogout = () => {
     localStorage.removeItem('token');
     window.location.href = '/';
   };
 
+  // --- (!!!) MODIFIED SEND MESSAGE HANDLER (!!!) ---
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (newMessage.trim() === '' || !socket.current || !user || !selectedChat) return;
     
+    // Create client-side timestamp and a unique temp ID
     const timestamp = new Date().toISOString();
-    const tempId = `temp_${timestamp}`;
+    // Make tempId more unique just in case user sends 2 messages in the same millisecond
+    const tempId = `temp_${timestamp}_${Math.random()}`; 
 
+    // Optimistic message to add to state immediately
     const optimisticMessage = {
-      _id: tempId,
+      _id: tempId, // This is the key we will search for
       senderId: user._id,
       recipientId: selectedChat._id,
       text: newMessage,
-      timestamp: timestamp,
+      timestamp: timestamp, 
       createdAt: timestamp,
       readBy: [user._id],
       deletedEveryone: false,
       deletedFor: []
     };
 
+    // Data to send to server
     const serverMessageData = {
       senderId: user._id,
       recipientId: selectedChat._id,
       text: newMessage,
-      timestamp: timestamp
+      timestamp: timestamp, 
+      clientId: tempId // <-- !! THE CRITICAL ADDITION !!
+                      // We are sending the tempId to the server.
+                      // Most servers will automatically include this extra property
+                      // when broadcasting the message back.
     };
 
+    console.log("Sending message with clientId:", tempId); // Debugging
     socket.current.emit('sendMessage', serverMessageData);
     setMessages(prevMessages => [...prevMessages, optimisticMessage]);
     setNewMessage('');
@@ -442,6 +500,7 @@ function Dashboard() {
   const closeContextMenu = () => setContextMenu(null);
 
   const handleDeleteMessage = async (message, type) => {
+      // This check is still important
       if (!message._id || message._id.startsWith('temp_')) {
           console.warn("Cannot delete unsaved message.");
           closeContextMenu();
@@ -479,6 +538,7 @@ function Dashboard() {
       }
   };
 
+  // --- Render ---
   if (!user) {
     return <div className="flex h-screen items-center justify-center bg-gray-900 text-white">Loading...</div>;
   }
