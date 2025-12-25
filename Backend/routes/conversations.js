@@ -58,5 +58,47 @@ router.put('/:conversationId/read', authMiddleware, async (req, res, next) => {
         next(err);
     }
 });
+// @route   POST api/conversations/findOrCreate
+// @desc    Find an existing 1-on-1 chat or create a new one
+// @access  Private
+router.post('/findOrCreate', authMiddleware, async (req, res, next) => {
+    try {
+        const currentUserId = req.user.id;
+        const otherUserId = req.body.userId; // Matches { userId: chatUser._id } from Dashboard.jsx
 
+        if (!otherUserId) {
+            return res.status(400).json({ msg: "User ID is required" });
+        }
+
+        // 1. Check if a 1-on-1 conversation already exists between these two
+        let conversation = await Conversation.findOne({
+            isGroup: false, 
+            members: { $all: [currentUserId, otherUserId] }
+        })
+        .populate('members', '-password')
+        .populate('lastMessage');
+
+        // 2. If it exists, return it
+        if (conversation) {
+            return res.json(conversation);
+        }
+
+        // 3. If not, create a new one
+        const newConversation = new Conversation({
+            members: [currentUserId, otherUserId],
+            isGroup: false
+        });
+
+        const savedConversation = await newConversation.save();
+
+        // Populate details so the frontend can display avatars immediately
+        const populatedConversation = await Conversation.findById(savedConversation._id)
+            .populate('members', '-password');
+
+        res.status(200).json(populatedConversation);
+
+    } catch (err) {
+        next(err);
+    }
+});
 module.exports = router;

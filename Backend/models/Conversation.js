@@ -1,18 +1,33 @@
 const mongoose = require('mongoose');
+const Schema = mongoose.Schema;
 
-const ConversationSchema = new mongoose.Schema(
-  {
-    members: {
-      type: [mongoose.Schema.Types.ObjectId],
-      ref: 'User',
-    },
-    // ADD THIS FIELD:
-    lastMessage: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Message',
-    }
+const ConversationSchema = new Schema({
+  members: [{
+    type: Schema.Types.ObjectId,
+    ref: 'User'
+  }],
+  lastMessage: {
+    type: Schema.Types.ObjectId,
+    ref: 'Message'
   },
-  { timestamps: true }
-);
+  
+  // --- NEW FIELDS FOR GROUPS ---
+  isGroup: {
+    type: Boolean,
+    default: false
+  },
+  groupName: {
+    type: String,
+    trim: true,
+    default: null
+  },
+  groupAdmin: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    default: null
+  },
+  // --- END NEW FIELDS ---
+  
+}, { timestamps: true });
 
 module.exports = mongoose.model('Conversation', ConversationSchema);

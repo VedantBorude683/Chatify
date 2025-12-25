@@ -3,28 +3,30 @@ const Message = require('../models/Message');
 const Conversation = require('../models/Conversation');
 const authMiddleware = require('../middleware/authMiddleware');
 
-// @route   GET api/messages/:otherUserId
-// @desc    Get message history, filtering deleted messages
+// =====================================================================
+// 1. GET MESSAGES (Fixes "0 messages" bug)
+// =====================================================================
+// @route   GET api/messages/:conversationId
+// @desc    Get message history by Conversation ID
 // @access  Private
-router.get('/:otherUserId', authMiddleware, async (req, res, next) => {
+router.get('/:conversationId', authMiddleware, async (req, res, next) => {
     try {
         const userId = req.user.id;
-        const otherUserId = req.params.otherUserId;
+        const { conversationId } = req.params;
 
-        const conversation = await Conversation.findOne({
-            members: { $all: [userId, otherUserId] }
-        });
-
-        if (!conversation) {
-            return res.json([]); 
+        // Validation: Ensure it looks like a valid ID
+        if (!conversationId || conversationId.length !== 24) {
+            return res.status(400).json([]);
         }
 
-        // Fetch messages not deleted for everyone AND not deleted for the current user
+        // Fetch messages for this specific conversation
         const messages = await Message.find({
-            conversationId: conversation._id,
+            conversationId: conversationId,
             deletedEveryone: false,
             deletedFor: { $nin: [userId] } 
-        }).sort({ createdAt: 1 }); 
+        })
+        .populate("senderId", "username email profilePicture") // Populates sender info
+        .sort({ createdAt: 1 }); 
 
         res.json(messages);
     } catch (err) {
@@ -32,7 +34,66 @@ router.get('/:otherUserId', authMiddleware, async (req, res, next) => {
     }
 });
 
-// --- NEW ROUTE: DELETE MESSAGE ---
+// =====================================================================
+// 2. SEND MESSAGE (Fixes "disappearing messages" bug)
+// =====================================================================
+// @route   POST api/messages/
+// @desc    Save to DB first, THEN emit to Socket
+// @access  Private
+
+    // @route   POST api/messages/
+// @desc    Send a message (Text, Image, or File)
+router.post('/', authMiddleware, async (req, res, next) => {
+    try {
+        const userId = req.user.id;
+        const { conversationId, text, messageType, fileUrl } = req.body;
+
+        // ✅ FIX: Only require text if the message is strictly a text message
+        if (messageType === 'text' && !text) {
+             return res.status(400).json("Message text is required");
+        }
+
+        // A. Create Message Object
+        const newMessage = new Message({
+            conversationId,
+            senderId: userId,
+            // Fallback text if none provided (useful for "Last Message" previews)
+            text: text || (messageType === 'image' ? 'Sent an image' : 'Sent a file'), 
+            messageType: messageType || 'text',
+            fileUrl: fileUrl || null,
+            readBy: [userId]
+        });
+
+        // B. Save to MongoDB
+        const savedMessage = await newMessage.save();
+
+        // C. Update Conversation (Last message & timestamp)
+        await Conversation.findByIdAndUpdate(conversationId, {
+            $set: { 
+                lastMessage: savedMessage._id,
+                updatedAt: new Date() 
+            }
+        });
+
+        // D. Populate Sender
+        const populatedMessage = await savedMessage.populate('senderId', 'username email');
+
+        // E. Send via Socket.io
+        const io = req.app.get('io'); 
+        if (io) {
+            io.to(conversationId).emit("receiveMessage", populatedMessage);
+        }
+
+        res.status(200).json(populatedMessage);
+
+    } catch (err) {
+        next(err);
+    }
+});
+
+// =====================================================================
+// 3. DELETE MESSAGE
+// =====================================================================
 // @route   DELETE api/messages/:messageId
 // @desc    Delete a message (for me or everyone)
 // @access  Private
@@ -40,7 +101,7 @@ router.delete('/:messageId', authMiddleware, async (req, res, next) => {
     try {
         const messageId = req.params.messageId;
         const userId = req.user.id;
-        const { type } = req.query; // Expecting ?type=me or ?type=everyone
+        const { type } = req.query; // ?type=me OR ?type=everyone
 
         const message = await Message.findById(messageId);
 
@@ -49,11 +110,13 @@ router.delete('/:messageId', authMiddleware, async (req, res, next) => {
         }
 
         const conversation = await Conversation.findById(message.conversationId);
+        // Security check: User must be part of conversation
         if (!conversation || !conversation.members.includes(userId)) {
              return res.status(403).json("Cannot delete message from this conversation.");
         }
 
         if (type === 'me') {
+            // Delete for just this user
             await Message.updateOne(
                 { _id: messageId },
                 { $addToSet: { deletedFor: userId } }
@@ -61,13 +124,13 @@ router.delete('/:messageId', authMiddleware, async (req, res, next) => {
             res.json({ message: "Message deleted for you." });
 
         } else if (type === 'everyone') {
+            // Delete for everyone (Sender only)
             if (message.senderId.toString() !== userId) {
                 return res.status(403).json("Only the sender can delete for everyone.");
             }
             
-            // Check if anyone besides the sender has read it
+            // Optional: Prevent delete if read by others
             const hasBeenReadByOthers = message.readBy.some(readerId => readerId.toString() !== userId);
-
             if (hasBeenReadByOthers) {
                 return res.status(403).json("Cannot delete for everyone, message has been read.");
             }
@@ -76,8 +139,14 @@ router.delete('/:messageId', authMiddleware, async (req, res, next) => {
             message.text = "This message was deleted"; 
             await message.save();
             
-            // TODO: Emit socket event 'messageDeletedEveryone' from index.js io.on('connection', ...)
-            // Example data to send: { messageId, conversationId }
+            // Notify clients via Socket
+            const io = req.app.get('io');
+            if (io) {
+                io.to(message.conversationId.toString()).emit('messageDeleted', { 
+                    messageId, 
+                    conversationId: message.conversationId 
+                });
+            }
 
             res.json({ message: "Message deleted for everyone.", updatedMessage: message });
             
