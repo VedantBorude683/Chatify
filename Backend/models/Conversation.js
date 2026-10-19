@@ -26,6 +26,16 @@ const ConversationSchema = new Schema({
     ref: 'User',
     default: null
   },
+  groupAvatar: {
+    type: String,
+    default: null
+  },
+  activeStream: {
+    isLive: { type: Boolean, default: false },
+    hostId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
+    streamTitle: { type: String, default: '' },
+    startedAt: { type: Date, default: null }
+  }
   // --- END NEW FIELDS ---
   
 }, { timestamps: true });

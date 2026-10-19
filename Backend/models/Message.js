@@ -14,14 +14,19 @@ const MessageSchema = new mongoose.Schema(
       type: String,
     },
     messageType: {
-    type: String,
-    enum: ['text', 'image', 'file'], // 'image' for <img>, 'file' for <a>
-    default: 'text'
-  },
-  fileUrl: {
-    type: String,
-    default: null
-  },
+      type: String,
+      enum: ['text', 'image', 'file', 'video', 'call'],
+      default: 'text'
+    },
+    fileUrl: {
+      type: String,
+      default: null
+    },
+    callInfo: {
+      callType: { type: String, enum: ['audio', 'video'], default: 'video' },
+      duration: { type: Number, default: 0 },
+      status: { type: String, enum: ['completed', 'missed', 'declined'], default: 'completed' }
+    },
     readBy: {
       type: [mongoose.Schema.Types.ObjectId],
       ref: 'User',

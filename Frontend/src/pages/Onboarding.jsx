@@ -1,161 +1,154 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { UserCircleIcon } from '@heroicons/react/24/solid';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import axios from 'axios';
+import { SparklesIcon, ArrowRightIcon, UserIcon, MapPinIcon, ChatBubbleBottomCenterTextIcon } from '@heroicons/react/24/outline';
+import { API_BASE_URL } from '../config';
 
-function Onboarding() {
-  const [showForm, setShowForm] = useState(false);
+export default function Onboarding() {
   const [displayName, setDisplayName] = useState('');
-  const [imagePreview, setImagePreview] = useState(null);
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useState('Hey there! I am using Chatify.');
   const [location, setLocation] = useState('');
-  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [avatarSeed, setAvatarSeed] = useState(Math.random().toString(36).substring(7));
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const navigate = useNavigate();
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setImagePreview(URL.createObjectURL(file));
-      // In a real app, you would also store the file object itself
-      // e.g., setImageFile(file);
-    }
-  };
+  const avatarUrl = `https://api.dicebear.com/7.x/bottts/svg?seed=${avatarSeed}`;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setIsSubmitting(true);
     try {
       const token = localStorage.getItem('token');
       if (!token) {
-        navigate('/'); // Redirect home if no token
+        navigate('/');
         return;
       }
 
-      const config = {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      };
-
+      const config = { headers: { Authorization: `Bearer ${token}` } };
       const payload = {
-        displayName,
-        status,
-        location,
-        // We are skipping the actual file upload logic for now
+        displayName: displayName.trim(),
+        status: status.trim(),
+        location: location.trim(),
+        avatar: avatarUrl
       };
-      
-      await axios.put('http://localhost:3001/api/user/onboarding', payload, config);
 
+      await axios.put(`${API_BASE_URL}/api/user/onboarding`, payload, config);
       navigate('/dashboard');
-
     } catch (err) {
-      console.error('Onboarding submission failed:', err);
-      // You could add an error message to the UI here
+      console.error('Onboarding failed:', err);
+      alert('Could not complete setup. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const stageVariants = {
-    hidden: { opacity: 0, scale: 0.95 },
-    visible: { opacity: 1, scale: 1 },
-    exit: { opacity: 0, scale: 0.95 },
-  };
-
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-900 p-4 text-white">
-      <div className="w-full max-w-lg rounded-2xl bg-gray-800/50 border border-white/10 shadow-2xl overflow-hidden p-8">
-        <AnimatePresence mode="wait">
-          {!showForm ? (
-            // Stage 1: Welcome Screen
-            <motion.div
-              key="welcome"
-              variants={stageVariants}
-              initial="hidden"
-              animate="visible"
-              exit="exit"
-              transition={{ duration: 0.3 }}
-              className="flex flex-col items-center text-center"
-            >
-              <h2 className="text-3xl font-bold">Welcome to ChatApp!</h2>
-              <p className="mt-2 text-gray-400">Let's create your profile.</p>
-              <button 
-                onClick={() => setShowForm(true)} 
-                className="mt-8 w-full max-w-xs rounded-md bg-teal-600 py-2 font-bold text-white transition-colors hover:bg-teal-700"
-              >
-                Let's Go
-              </button>
-            </motion.div>
-          ) : (
-            // Stage 2: The Combined Profile Form
-            <motion.div
-              key="form"
-              variants={stageVariants}
-              initial="hidden"
-              animate="visible"
-              exit="exit"
-              transition={{ duration: 0.3 }}
-            >
-              <h2 className="text-2xl font-bold text-center">Create Your Profile</h2>
-              <form onSubmit={handleSubmit} className="mt-8 space-y-6">
-                {/* Avatar Upload */}
-                <div className="flex items-center gap-x-4">
-                  {imagePreview ? (
-                    <img src={imagePreview} className="h-20 w-20 rounded-full object-cover" alt="Avatar preview" />
-                  ) : (
-                    <UserCircleIcon className="h-20 w-20 text-gray-500" />
-                  )}
-                  <label htmlFor="file-upload" className="cursor-pointer rounded-md bg-white/10 px-3 py-2 text-sm font-semibold shadow-sm hover:bg-white/20">
-                    <span>Upload Avatar</span>
-                    <input id="file-upload" type="file" className="sr-only" onChange={handleImageChange} accept="image/*" />
-                  </label>
-                </div>
-
-                {/* Display Name & Location Inputs */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="displayName" className="block font-semibold text-gray-300">Display Name</label>
-                    <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required
-                      className="mt-2 w-full rounded-md border border-gray-600 bg-gray-700/50 px-3 py-2 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                      placeholder="e.g., Jane Doe"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="location" className="block font-semibold text-gray-300">Location</label>
-                    <input type="text" value={location} onChange={(e) => setLocation(e.target.value)}
-                      className="mt-2 w-full rounded-md border border-gray-600 bg-gray-700/50 px-3 py-2 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                      placeholder="e.g., Solapur, India"
-                    />
-                  </div>
-                </div>
-
-                {/* Status/Bio Input */}
-                <div>
-                  <label htmlFor="status" className="block font-semibold text-gray-300">Status</label>
-                  <textarea id="status" value={status} onChange={(e) => setStatus(e.target.value)} rows={2}
-                    className="mt-2 w-full resize-none rounded-md border border-gray-600 bg-gray-700/50 px-3 py-2 focus:border-teal-500 focus:outline-none focus:ring-1 focus:ring-teal-500"
-                    placeholder="e.g., Available | Working on a project..."
-                  />
-                </div>
-
-                {/* Notification Toggle */}
-                <div className="flex items-center justify-between rounded-lg bg-gray-700/50 p-4 border border-gray-600">
-                    <label htmlFor="notifications" className="font-semibold text-gray-300">Enable Desktop Notifications</label>
-                    <button type="button" onClick={() => setNotificationsEnabled(!notificationsEnabled)}
-                        className={`${notificationsEnabled ? 'bg-teal-600' : 'bg-gray-600'} relative inline-flex h-6 w-11 items-center rounded-full transition-colors`}
-                    >
-                        <span className={`${notificationsEnabled ? 'translate-x-6' : 'translate-x-1'} inline-block h-4 w-4 transform rounded-full bg-white transition-transform`} />
-                    </button>
-                </div>
-
-                <button type="submit" className="w-full rounded-md bg-teal-600 py-2 font-bold text-white transition-colors hover:bg-teal-700">
-                  Finish Setup
-                </button>
-              </form>
-            </motion.div>
-          )}
-        </AnimatePresence>
+    <div className="flex min-h-screen items-center justify-center bg-zinc-950 p-4 text-zinc-100 selection:bg-emerald-500 selection:text-zinc-950">
+      {/* Ambient Lighting */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 h-96 w-96 rounded-full bg-emerald-500/10 blur-[120px]" />
       </div>
+
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ duration: 0.3 }}
+        className="relative w-full max-w-lg overflow-hidden rounded-3xl bg-zinc-900 border border-zinc-800 p-8 sm:p-10 shadow-2xl backdrop-blur-2xl"
+      >
+        <div className="text-center mb-8">
+          <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-emerald-500 to-teal-400 font-black text-zinc-950 text-xl shadow-lg shadow-emerald-500/20">
+            C
+          </div>
+          <h2 className="text-2xl font-bold tracking-tight text-zinc-100">Setup Your Chatify Profile</h2>
+          <p className="mt-1 text-xs text-zinc-400">Personalize your identity for synchronous chats and video streams</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Avatar Generator */}
+          <div className="flex flex-col sm:flex-row items-center gap-5 p-4 rounded-2xl bg-zinc-950/60 border border-zinc-800/80">
+            <img
+              src={avatarUrl}
+              alt="Avatar"
+              className="h-20 w-20 rounded-2xl border-2 border-emerald-500/50 bg-zinc-900 object-cover shadow-lg"
+            />
+            <div className="text-center sm:text-left flex-grow">
+              <p className="text-sm font-semibold text-zinc-200">Your 3D Bot Persona</p>
+              <p className="text-xs text-zinc-400 mt-0.5">Click to generate a unique avatar seed</p>
+              <button
+                type="button"
+                onClick={() => setAvatarSeed(Math.random().toString(36).substring(7))}
+                className="mt-2.5 inline-flex items-center gap-1.5 rounded-xl bg-zinc-800 px-3.5 py-1.5 text-xs font-semibold text-emerald-400 hover:bg-zinc-700 transition-colors border border-zinc-700/60"
+              >
+                <SparklesIcon className="h-4 w-4" />
+                Randomize Avatar
+              </button>
+            </div>
+          </div>
+
+          {/* Display Name */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+              Display Name
+            </label>
+            <div className="relative">
+              <UserIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+              <input
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="e.g. Alex Rivers"
+                className="w-full rounded-xl bg-zinc-950 border border-zinc-800 pl-10 pr-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+                required
+              />
+            </div>
+          </div>
+
+          {/* Status Message */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+              Status Message
+            </label>
+            <div className="relative">
+              <ChatBubbleBottomCenterTextIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+              <input
+                type="text"
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                placeholder="e.g. Ready for video chat"
+                className="w-full rounded-xl bg-zinc-950 border border-zinc-800 pl-10 pr-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+          </div>
+
+          {/* Location */}
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">
+              Location (Optional)
+            </label>
+            <div className="relative">
+              <MapPinIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
+              <input
+                type="text"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="e.g. New York, USA"
+                className="w-full rounded-xl bg-zinc-950 border border-zinc-800 pl-10 pr-4 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+          </div>
+
+          {/* Submit */}
+          <button
+            type="submit"
+            disabled={isSubmitting || !displayName.trim()}
+            className="w-full flex items-center justify-center gap-2 rounded-xl bg-emerald-500 py-3.5 text-sm font-bold text-zinc-950 hover:bg-emerald-400 transition-all shadow-lg shadow-emerald-500/20 active:scale-95 disabled:opacity-50"
+          >
+            <span>{isSubmitting ? 'Finalizing Profile...' : 'Enter Chatify'}</span>
+            <ArrowRightIcon className="h-4 w-4" />
+          </button>
+        </form>
+      </motion.div>
     </div>
   );
 }
-
-export default Onboarding;

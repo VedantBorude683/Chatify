@@ -22,9 +22,13 @@ const UserSchema = new mongoose.Schema({
     type: String,
     default: "",
   },
-  hasCompletedOnboarding: {
-    type: Boolean,
-    default: false,
+  avatar: {
+    type: String,
+    default: "",
+  },
+  lastSeen: {
+    type: Date,
+    default: Date.now,
   },
 }, { timestamps: true });
 

@@ -12,18 +12,24 @@ const conversationRoutes = require('./routes/conversations');
 const uploadRoutes = require('./routes/upload');
 const groupRoutes = require('./routes/groups');
 const Message = require('./models/Message');
-const Conversation = require('./models/Conversation'); // Ensure Conversation model is required
-
+const Conversation = require('./models/Conversation');
+const User = require('./models/User');
 
 dotenv.config();
 
 const connectDB = async () => {
+  const uri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/chatify';
   try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('MongoDB Connected...');
+    await mongoose.connect(uri);
+    console.log(`✅ MongoDB Connected to: ${uri}`);
   } catch (err) {
-    console.error('MongoDB Connection Error:', err.message);
-    process.exit(1);
+    console.error('⚠️ Primary MongoDB Connection failed, trying local fallback:', err.message);
+    try {
+      await mongoose.connect('mongodb://127.0.0.1:27017/chatify');
+      console.log('✅ Connected to local MongoDB fallback at mongodb://127.0.0.1:27017/chatify');
+    } catch (fallbackErr) {
+      console.error('❌ Failed to connect to local MongoDB:', fallbackErr.message);
+    }
   }
 };
 
@@ -44,15 +50,14 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/groups', groupRoutes);
 
 app.use((err, req, res, next) => {
-  console.error("--- UNHANDLED ERROR ---");
-  console.error(err.stack);
-  res.status(500).send('Server Error: Something broke!');
+  console.error("--- UNHANDLED ERROR ---", err);
+  res.status(500).json({ error: 'Server Error: Something broke!' });
 });
 
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: "*", // Adjust in production
+    origin: "*",
     methods: ["GET", "POST"]
   }
 });
@@ -60,169 +65,308 @@ app.set("io", io);
 
 const PORT = process.env.PORT || 3001;
 
-let onlineUsers = {}; // Maps userId to socketId
+let onlineUsers = {}; // Maps userId -> socketId
+let socketToUser = {}; // Maps socketId -> userId
 
 const addUser = (userId, socketId) => {
   onlineUsers[userId] = socketId;
+  socketToUser[socketId] = userId;
 };
 
 const removeUser = (socketId) => {
-  for (let userId in onlineUsers) {
-    if (onlineUsers[userId] === socketId) {
-      delete onlineUsers[userId];
-      break;
-    }
+  const userId = socketToUser[socketId];
+  if (userId) {
+    delete onlineUsers[userId];
+    delete socketToUser[socketId];
   }
+  return userId;
 };
 
-// --- (!!!) COMPLETE PHASE 3 SOCKET LOGIC (!!!) ---
+// --- SOCKET.IO REAL-TIME LOGIC ---
 io.on('connection', (socket) => {
-  console.log(`✅ A user connected: ${socket.id}`);
+  console.log(`⚡ Socket connected: ${socket.id}`);
 
-  // --- UPDATED: Join rooms on connect ---
+  // Register online user
   socket.on('addUser', async (userId) => {
+    if (!userId) return;
     addUser(userId, socket.id);
     io.emit('getOnlineUsers', Object.keys(onlineUsers));
 
-    // Join rooms for existing conversations
+    // Join all conversation rooms for this user
     try {
       const userConversations = await Conversation.find({ members: userId });
       userConversations.forEach(convo => {
         socket.join(convo._id.toString());
-        console.log(`User ${userId} joined room ${convo._id.toString()}`);
       });
+      console.log(`User ${userId} joined ${userConversations.length} conversation rooms`);
     } catch (err) {
-      console.error(`Error fetching conversations for user ${userId} to join rooms:`, err);
+      console.error(`Error joining conversation rooms for user ${userId}:`, err);
     }
   });
 
-  // --- UPDATED: 'sendMessage' using rooms ---
+  // Explicitly join a conversation room
+  socket.on('joinConversation', (conversationId) => {
+    if (conversationId) {
+      socket.join(conversationId.toString());
+      console.log(`Socket ${socket.id} joined conversation: ${conversationId}`);
+    }
+  });
+
+  socket.on('joinNewGroupRoom', ({ conversationId }) => {
+    if (conversationId) {
+      socket.join(conversationId.toString());
+      console.log(`Socket ${socket.id} joined new group room: ${conversationId}`);
+    }
+  });
+
+  // Real-time message dispatch via socket
   socket.on('sendMessage', async (data) => {
     const {
       senderId,
-      conversationId, // Use conversationId primarily
+      conversationId,
       text,
       timestamp,
       clientId,
       messageType,
       fileUrl,
+      callInfo
     } = data;
 
     if (!conversationId) {
-      console.error("sendMessage event received without conversationId:", data);
+      console.error("sendMessage received without conversationId:", data);
       return;
     }
 
     try {
-      // Find the conversation (optional check, good for robustness)
       const conversation = await Conversation.findById(conversationId);
-      if (!conversation) {
-        console.error(`Conversation ${conversationId} not found for sendMessage.`);
-        // Maybe handle sending an error back to the client?
-        return;
+      if (!conversation) return;
+
+      let fallbackText = text;
+      if (!fallbackText) {
+        if (messageType === 'image') fallbackText = 'Sent an image';
+        else if (messageType === 'video') fallbackText = 'Sent a video';
+        else if (messageType === 'call') fallbackText = `${callInfo?.callType === 'audio' ? 'Audio' : 'Video'} call (${callInfo?.status || 'ended'})`;
+        else fallbackText = 'Sent a file';
       }
 
       const newMessage = new Message({
         conversationId: conversation._id,
         senderId,
-        text,
+        text: fallbackText,
         timestamp: timestamp || new Date(),
         readBy: [senderId],
         messageType: messageType || 'text',
-        fileUrl: fileUrl || null
+        fileUrl: fileUrl || null,
+        callInfo: callInfo || undefined
       });
 
       const savedMessage = await newMessage.save();
 
       conversation.lastMessage = savedMessage._id;
-      // Also update the 'updatedAt' timestamp for sorting
       conversation.updatedAt = Date.now();
       await conversation.save();
 
-      // Populate sender details for the message to be sent
-      const populatedMessage = await Message.findById(savedMessage._id).populate('senderId', 'username email'); // Adjust fields as needed
+      const populatedMessage = await Message.findById(savedMessage._id)
+        .populate('senderId', 'username email avatar status');
       
       const messageToSend = populatedMessage.toObject();
-      messageToSend.clientId = clientId; // Add back the clientId
+      messageToSend.clientId = clientId;
 
-      // --- ROOM BROADCAST ---
-      // Emit to everyone else in the room (conversation)
-      // We send the fully populated message object
-      console.log(`Broadcasting receiveMessage to room ${conversationId.toString()}`);
-      socket.to(conversationId.toString()).emit('receiveMessage', messageToSend);
-
-      // Send confirmation (including populated sender) back to the original sender
-      console.log(`Sending receiveMessage confirmation to sender ${socket.id}`);
-      socket.emit('receiveMessage', messageToSend);
-
-      // --- Optional: Notify users for sidebar update ---
-      // This helps if a user isn't actively looking at the chat
-      // but needs their sidebar conversation list updated immediately.
-      // We already update the list inside the 'receiveMessage' handler on client,
-      // but this could be an alternative or addition.
-      // conversation.members.forEach(memberId => {
-      //   const memberSocketId = onlineUsers[memberId.toString()];
-      //   if (memberSocketId && memberSocketId !== socket.id) {
-      //     io.to(memberSocketId).emit('updateConversationList', { /* maybe send updated convo object */ });
-      //   }
-      // });
-
+      // Broadcast to entire room including sender for perfect synchronization
+      io.to(conversationId.toString()).emit('receiveMessage', messageToSend);
 
     } catch (err) {
       console.error(`Error handling sendMessage for convo ${conversationId}:`, err);
-      // Optionally emit an error back to the sender
-      // socket.emit('sendMessageError', { clientId, error: 'Failed to send message' });
     }
   });
 
-  // --- UPDATED: Typing events using rooms ---
+  // Typing indicators
   socket.on('startTyping', (data) => {
-    const { conversationId, senderId } = data;
+    const { conversationId, senderId, senderUsername } = data;
     if (conversationId && senderId) {
-      // Broadcast to others in the room
-      socket.to(conversationId.toString()).emit('userTyping', { conversationId, senderId });
+      socket.to(conversationId.toString()).emit('userTyping', { 
+        conversationId, 
+        senderId, 
+        senderUsername 
+      });
     }
   });
 
   socket.on('stopTyping', (data) => {
     const { conversationId, senderId } = data;
     if (conversationId && senderId) {
-      // Broadcast to others in the room
-      socket.to(conversationId.toString()).emit('userStoppedTyping', { conversationId, senderId });
+      socket.to(conversationId.toString()).emit('userStoppedTyping', { 
+        conversationId, 
+        senderId 
+      });
     }
   });
 
-  // --- UPDATED: Delete notifications using rooms ---
+  // Message deletion
   socket.on('notifyDeleteEveryone', (data) => {
     const { messageId, conversationId } = data;
     if (conversationId) {
-      // Broadcast to others in the room
       socket.to(conversationId.toString()).emit('messageDeleted', { messageId, conversationId });
     }
   });
 
-  // --- UPDATED: Leave rooms on disconnect ---
-  socket.on('disconnect', async () => {
-    const userId = Object.keys(onlineUsers).find(key => onlineUsers[key] === socket.id);
-    if (userId) {
-        // Leave rooms associated with the user
-        try {
-            const userConversations = await Conversation.find({ members: userId });
-            userConversations.forEach(convo => {
-                socket.leave(convo._id.toString());
-                console.log(`User ${userId} left room ${convo._id.toString()}`);
-            });
-        } catch (err) {
-            console.error(`Error fetching conversations for user ${userId} to leave rooms:`, err);
-        }
+  // Read status synchronization
+  socket.on('markConversationRead', ({ conversationId, userId }) => {
+    if (conversationId && userId) {
+      socket.to(conversationId.toString()).emit('conversationRead', { conversationId, userId });
     }
-    removeUser(socket.id);
-    console.log(`❌ User disconnected: ${socket.id} (was ${userId || 'unknown'})`);
-    io.emit('getOnlineUsers', Object.keys(onlineUsers)); // Update online list for everyone
+  });
+
+  // ==========================================
+  // WEBRTC VIDEO CALL SIGNALING (1-ON-1 CALLS)
+  // ==========================================
+
+  socket.on('call:user', ({ userToCall, signalData, from, callerName, callerAvatar, isVideo, conversationId }) => {
+    const targetSocketId = onlineUsers[userToCall];
+    console.log(`📞 Call initiated from ${from} (${callerName}) to ${userToCall}. Online: ${!!targetSocketId}`);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('call:incoming', {
+        signal: signalData,
+        from,
+        callerName,
+        callerAvatar,
+        isVideo: isVideo !== false,
+        conversationId
+      });
+    } else {
+      socket.emit('call:unavailable', { message: 'User is currently offline.' });
+    }
+  });
+
+  socket.on('call:accept', ({ to, signal }) => {
+    const targetSocketId = onlineUsers[to];
+    console.log(`📞 Call accepted, sending signal back to ${to}`);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('call:accepted', { signal });
+    }
+  });
+
+  socket.on('call:ice-candidate', ({ to, candidate }) => {
+    const targetSocketId = onlineUsers[to];
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('call:ice-candidate', { candidate });
+    }
+  });
+
+  socket.on('call:reject', ({ to, reason }) => {
+    const targetSocketId = onlineUsers[to];
+    console.log(`📞 Call rejected by user, notifying ${to}`);
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('call:rejected', { reason: reason || 'Call declined' });
+    }
+  });
+
+  socket.on('call:end', ({ to, conversationId }) => {
+    const targetSocketId = onlineUsers[to];
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('call:ended', { conversationId });
+    }
+    if (conversationId) {
+      socket.to(conversationId.toString()).emit('call:ended', { conversationId });
+    }
+  });
+
+  // ==========================================
+  // LIVE VIDEO STREAMING SIGNALING (ROOM BROADCAST)
+  // ==========================================
+
+  socket.on('stream:start', async ({ conversationId, streamTitle, host }) => {
+    console.log(`🔴 Stream started in convo ${conversationId} by ${host?.username}`);
+    try {
+      await Conversation.findByIdAndUpdate(conversationId, {
+        activeStream: {
+          isLive: true,
+          hostId: host?._id,
+          streamTitle: streamTitle || `${host?.username}'s Live Stream`,
+          startedAt: new Date()
+        }
+      });
+      io.to(conversationId.toString()).emit('stream:started', {
+        conversationId,
+        streamTitle: streamTitle || `${host?.username}'s Live Stream`,
+        host,
+        startedAt: new Date()
+      });
+    } catch (err) {
+      console.error('Error starting live stream:', err);
+    }
+  });
+
+  socket.on('stream:join', ({ conversationId, viewer }) => {
+    console.log(`👀 Viewer ${viewer?.username} joined stream in ${conversationId}`);
+    socket.to(conversationId.toString()).emit('stream:viewer-joined', {
+      conversationId,
+      viewer,
+      viewerSocketId: socket.id
+    });
+  });
+
+  socket.on('stream:signal', ({ toSocketId, signal, fromViewer, fromHost }) => {
+    if (toSocketId) {
+      io.to(toSocketId).emit('stream:signal', {
+        signal,
+        fromSocketId: socket.id,
+        fromViewer,
+        fromHost
+      });
+    }
+  });
+
+  socket.on('stream:end', async ({ conversationId }) => {
+    console.log(`⏹️ Stream ended in convo ${conversationId}`);
+    try {
+      await Conversation.findByIdAndUpdate(conversationId, {
+        'activeStream.isLive': false,
+        'activeStream.hostId': null
+      });
+      io.to(conversationId.toString()).emit('stream:ended', { conversationId });
+    } catch (err) {
+      console.error('Error ending live stream:', err);
+    }
+  });
+
+  // Disconnect handling
+  socket.on('disconnect', async () => {
+    const userId = removeUser(socket.id);
+    if (userId) {
+      console.log(`❌ User disconnected: ${userId} (socket ${socket.id})`);
+      io.emit('getOnlineUsers', Object.keys(onlineUsers));
+
+      // If user was hosting a stream, close it
+      try {
+        const liveConvo = await Conversation.findOne({ 'activeStream.hostId': userId, 'activeStream.isLive': true });
+        if (liveConvo) {
+          liveConvo.activeStream.isLive = false;
+          liveConvo.activeStream.hostId = null;
+          await liveConvo.save();
+          io.to(liveConvo._id.toString()).emit('stream:ended', { conversationId: liveConvo._id });
+        }
+      } catch (err) {
+        console.error('Error cleaning up live stream on disconnect:', err);
+      }
+    }
   });
 });
 
-// --- Server Listen ---
+// Serve Frontend static assets in production if dist exists
+const frontendDist = path.join(__dirname, '../Frontend/dist');
+const fs = require('fs');
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
+      return next();
+    }
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
+
+// --- SERVER LISTEN ---
 server.listen(PORT, () => {
-  console.log(`🚀 Server listening on port ${PORT}`);
+  console.log(`🚀 Chatify Backend listening on port ${PORT}`);
 });

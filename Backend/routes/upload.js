@@ -32,11 +32,9 @@ router.post('/', upload.single('file'), (req, res) => {
     return res.status(400).json({ msg: 'No file uploaded' });
   }
 
-  // Return the public URL of the file
+  const baseUrl = process.env.BASE_URL || `${req.protocol}://${req.get('host')}`;
   res.json({
-    // This URL must be accessible from the client.
-    // Ensure 'http://localhost:3001' matches your server's address.
-    fileUrl: `http://localhost:3001/uploads/${req.file.filename}` 
+    fileUrl: `${baseUrl}/uploads/${req.file.filename}` 
   });
 });
 

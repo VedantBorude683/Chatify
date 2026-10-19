@@ -46,21 +46,28 @@ router.get('/:conversationId', authMiddleware, async (req, res, next) => {
 router.post('/', authMiddleware, async (req, res, next) => {
     try {
         const userId = req.user.id;
-        const { conversationId, text, messageType, fileUrl } = req.body;
+        const { conversationId, text, messageType, fileUrl, clientId, callInfo } = req.body;
 
-        // ✅ FIX: Only require text if the message is strictly a text message
         if (messageType === 'text' && !text) {
              return res.status(400).json("Message text is required");
+        }
+
+        let fallbackText = text;
+        if (!fallbackText) {
+          if (messageType === 'image') fallbackText = 'Sent an image';
+          else if (messageType === 'video') fallbackText = 'Sent a video';
+          else if (messageType === 'call') fallbackText = `${callInfo?.callType === 'audio' ? 'Audio' : 'Video'} call (${callInfo?.status || 'ended'})`;
+          else fallbackText = 'Sent a file';
         }
 
         // A. Create Message Object
         const newMessage = new Message({
             conversationId,
             senderId: userId,
-            // Fallback text if none provided (useful for "Last Message" previews)
-            text: text || (messageType === 'image' ? 'Sent an image' : 'Sent a file'), 
+            text: fallbackText, 
             messageType: messageType || 'text',
             fileUrl: fileUrl || null,
+            callInfo: callInfo || undefined,
             readBy: [userId]
         });
 
@@ -76,15 +83,19 @@ router.post('/', authMiddleware, async (req, res, next) => {
         });
 
         // D. Populate Sender
-        const populatedMessage = await savedMessage.populate('senderId', 'username email');
+        const populatedMessage = await savedMessage.populate('senderId', 'username email avatar status');
+        const messageToSend = populatedMessage.toObject();
+        if (clientId) {
+            messageToSend.clientId = clientId;
+        }
 
         // E. Send via Socket.io
         const io = req.app.get('io'); 
         if (io) {
-            io.to(conversationId).emit("receiveMessage", populatedMessage);
+            io.to(conversationId.toString()).emit("receiveMessage", messageToSend);
         }
 
-        res.status(200).json(populatedMessage);
+        res.status(200).json(messageToSend);
 
     } catch (err) {
         next(err);
