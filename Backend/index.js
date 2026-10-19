@@ -36,10 +36,9 @@ const connectDB = async () => {
 connectDB();
 
 const ALLOWED_ORIGINS = [
-  'https://chatify-mpc5cy3uk-vedantborude77-6412s-projects.vercel.app',
-  'https://chatify.vercel.app',
-  // Allow any *.vercel.app subdomain for preview deployments
-  /https:\/\/chatify.*\.vercel\.app$/,
+  'https://chatify-one-lyart.vercel.app',          // production domain
+  'https://chatify-mpc5cy3uk-vedantborude77-6412s-projects.vercel.app', // preview
+  /https:\/\/chatify.*\.vercel\.app$/,              // all vercel preview deploys
   'http://localhost:5173',
   'http://localhost:3000',
   'http://localhost:4173',
