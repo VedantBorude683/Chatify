@@ -62,7 +62,7 @@ const corsOptions = {
 
 const app = express();
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.options('/{*path}', cors(corsOptions));
 app.use(express.json());
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -392,7 +392,8 @@ const frontendDist = path.join(__dirname, '../Frontend/dist');
 const fs = require('fs');
 if (fs.existsSync(frontendDist)) {
   app.use(express.static(frontendDist));
-  app.get('*', (req, res, next) => {
+  // Express 5 requires /{*path} instead of bare '*'
+  app.get('/{*path}', (req, res, next) => {
     if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) {
       return next();
     }
